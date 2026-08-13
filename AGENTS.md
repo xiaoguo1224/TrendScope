@@ -35,6 +35,37 @@
 
 系统不得固定为“小红书”“穿戴甲”“美甲”或任何单一平台/领域。
 
+## Autonomous Development
+
+主 Agent 在收到“继续项目开发”或总体开发目标后，
+负责依据 DEVELOPMENT_STATUS.md 判断当前阶段。
+
+若当前 Stage 已满足全部验收条件：
+
+1. 更新 DEVELOPMENT_STATUS.md
+2. 创建 Stage Git commit
+3. 自动读取下一 Stage 文档
+4. 自动继续开发
+
+除非遇到 AGENTS.md 定义的 Stop Conditions，
+否则不得要求用户逐阶段确认。
+
+## Multi-Agent Policy
+
+阶段之间串行。
+阶段内部允许并行。
+
+主 Agent 负责：
+- 架构
+- 任务拆解
+- Subagent 分配
+- 冲突处理
+- 集成
+- Git
+- 最终验收
+
+Subagents 只负责明确边界内的专项任务。
+
 ---
 
 ## 3. 固定技术栈

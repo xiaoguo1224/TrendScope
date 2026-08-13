@@ -2,19 +2,49 @@
 
 通用 AI 内容趋势研究 Agent。当前已完成 Version 1：页面化采集/分析配置、公开内容采集、互动排序、图文分析、趋势工作台、Creative Concept、图片 Prompt 与研究报告。
 
-## 本地运行
+## 启动教程
 
-后端要求 Python 3.12 和 `uv`：
+### 1. 准备环境
+
+在 Windows PowerShell 中确认已安装：
+
+- Python 3.12；
+- [uv](https://docs.astral.sh/uv/)；
+- Node.js（建议使用当前 LTS，包含 `npm`）。
+
+以下命令均从项目根目录 `TrendScope` 执行。首次运行需要网络连接，以下载 Python、Node 依赖和 Chromium 浏览器运行时。
+
+### 2. 安装后端依赖并初始化数据库
 
 ```powershell
 cd backend
 uv sync
 uv run playwright install chromium
 uv run alembic upgrade head
+```
+
+`uv sync` 会创建并管理后端虚拟环境；`playwright install chromium` 是实际采集公开网页所必需的浏览器运行时；迁移会创建或升级项目根目录的 SQLite 文件 `data/app.db`。
+
+### 3. 启动后端
+
+保持第一个 PowerShell 窗口打开，执行：
+
+```powershell
+cd backend
 uv run uvicorn app.main:app --reload
 ```
 
-前端：
+服务默认地址为 `http://127.0.0.1:8000`。可在另一窗口检查健康状态和 API 文档：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+成功时返回 `status: ok`；交互式 API 文档位于 `http://127.0.0.1:8000/docs`。
+
+### 4. 启动前端
+
+另开第二个 PowerShell 窗口，在项目根目录执行：
 
 ```powershell
 cd frontend
@@ -22,7 +52,30 @@ npm install
 npm run dev
 ```
 
-后端默认监听 `http://127.0.0.1:8000`，前端开发服务器将 `/api` 和 `/health` 代理到后端。
+打开终端显示的地址（默认是 `http://127.0.0.1:5173`）。开发服务器会将 `/api` 和 `/health` 请求代理到 `http://127.0.0.1:8000`，因此后端必须保持运行。
+
+### 5. 首次使用
+
+1. 打开“系统配置”，确认 `generic-web` 平台已启用；可按目标公开页面调整搜索 URL、Selector、解析规则和采集默认值。
+2. 在“创建研究任务”填写平台、主题、关键词、时间范围、最大采集数量和研究目标，提交任务。
+3. 打开任务详情并执行任务。系统依次扩展查询、采集公开内容、排名、分析、汇总趋势、生成 Concept / 文本 Prompt / 报告。
+4. 在详情页查看 Hot、Rising、分析、趋势、Creative Concepts、图片 Prompt 和报告；文件同时保存到 `reports/{task_id}/report.md`、`report.json`、`prompts.md`。
+
+若目标网站要求登录、验证码或访问验证，系统会记录可解释的失败或部分结果，不会尝试绕过访问控制。
+
+### 常用验证与停止
+
+```powershell
+# 后端测试
+cd backend
+uv run pytest
+
+# 前端生产构建
+cd frontend
+npm run build
+```
+
+在运行服务的终端按 `Ctrl+C` 即可停止。之后再次启动时，只需重复“启动后端”和“启动前端”；依赖安装和浏览器安装通常不需要重复执行。
 
 ## 数据与迁移
 

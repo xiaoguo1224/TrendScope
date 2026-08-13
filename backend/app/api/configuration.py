@@ -19,12 +19,13 @@ router = APIRouter(prefix="/config", tags=["configuration"])
 DEFAULT_SETTINGS: dict[str, tuple[object, str]] = {
     "collection_defaults": ({"max_items": 50, "time_range": "7d", "request_interval_ms": 1200, "scroll_interval_ms": 1000}, "Default collection parameters"),
     "browser_defaults": ({"headless": True, "timeout_seconds": 30, "download_images": True}, "Default browser parameters"),
+    "report_defaults": ({"concept_count": 10, "prompt_language": "English", "prompt_style": "editorial lifestyle photography", "include_markdown": True}, "Creative concept, image prompt, and report defaults"),
 }
 DEFAULT_GENERIC_WEB_PLATFORM = {
     "name": "generic-web",
     "search_url_template": "https://www.bing.com/search?q={query}",
     "selectors": {"item": "li.b_algo", "field_title": "h2", "field_url": "h2 a", "field_text": "p"},
-    "parser_rules": {"scroll_count": 2, "access_block_indicators": ["captcha", "verify you are human", "access denied"]},
+    "parser_rules": {"scroll_count": 0, "access_block_indicators": ["captcha", "verify you are human", "access denied"]},
     "enabled": True,
 }
 DEFAULT_PROMPTS: tuple[dict[str, object], ...] = (
@@ -32,6 +33,9 @@ DEFAULT_PROMPTS: tuple[dict[str, object], ...] = (
     {"name": "text-analysis-default", "purpose": "text_analysis", "template": "Analyze the content structure for {topic}. Identify reusable patterns; do not reproduce the source text.", "enabled": True},
     {"name": "visual-analysis-default", "purpose": "visual_analysis", "template": "Analyze the local image using the specified generic visual fields. Put only industry-specific observations in domain_attributes.", "enabled": True},
     {"name": "trend-analysis-default", "purpose": "trend_analysis", "template": "Aggregate patterns across multiple contents for {topic}; clearly state limitations when the sample is insufficient.", "enabled": True},
+    {"name": "creative-concept-default", "purpose": "creative_concept", "template": "Synthesize distinct, original creative directions for {topic} from this aggregated trend evidence: {trend_basis}. Do not reproduce one source item.", "enabled": True},
+    {"name": "image-prompt-default", "purpose": "image_prompt", "template": "Write safe, generic, text-only image prompts for {topic}. Concept: {concept_name}. Visual evidence: {visual_context}. Domain attributes: {domain_attributes}. Trend basis: {trend_basis}. Do not call a rendering service.", "enabled": True},
+    {"name": "report-default", "purpose": "report", "template": "Produce a source-grounded trend research report for {topic}; distinguish observed facts, AI inference, and limitations.", "enabled": True},
 )
 DEFAULT_RANKING = {"name": "default", "enabled": True, "like_weight": 1.0, "favorite_weight": 1.2, "comment_weight": 1.5, "share_weight": 1.5, "view_weight": 0.1, "freshness_half_life_hours": 72, "growth_window_hours": 24}
 

@@ -7,9 +7,11 @@ from app.models.research_task import ResearchTask, ResearchTaskStatus
 from app.repositories.research_task import ResearchTaskRepository
 from app.schemas.research_task import ContentItemRead, ResearchTaskCreate, ResearchTaskRead
 from app.schemas.analysis import AnalysisItemRead, RankingsRead, TrendAnalysisRead
+from app.schemas.reporting import CreativeConceptRead, ImagePromptRead, ReportRead
 from app.services.analysis import AnalysisService
 from app.services.collection import ContentCollectionService
 from app.services.ranking import RankingService
+from app.services.reporting import ReportingService
 
 router = APIRouter(prefix="/research/tasks", tags=["research-tasks"])
 
@@ -38,6 +40,8 @@ async def run_task(task_id: int, database: Session = Depends(get_db)) -> Researc
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research task not found")
     result = await ContentCollectionService(database).run(task)
+    if result.status is not ResearchTaskStatus.FAILED:
+        await ReportingService(database).report_for_task(result, regenerate=True)
     return _task_response(result, database)
 
 
@@ -65,6 +69,21 @@ async def get_analysis(task_id: int, database: Session = Depends(get_db)) -> lis
 async def get_trends(task_id: int, database: Session = Depends(get_db)) -> TrendAnalysisRead:
     task = _get_task_or_404(task_id, database)
     return await AnalysisService(database).trends_for_task(task)
+
+
+@router.get("/{task_id}/concepts", response_model=list[CreativeConceptRead])
+async def get_concepts(task_id: int, database: Session = Depends(get_db)) -> list[CreativeConceptRead]:
+    return await ReportingService(database).concepts_for_task(_get_task_or_404(task_id, database))
+
+
+@router.get("/{task_id}/prompts", response_model=list[ImagePromptRead])
+async def get_prompts(task_id: int, database: Session = Depends(get_db)) -> list[ImagePromptRead]:
+    return await ReportingService(database).prompts_for_task(_get_task_or_404(task_id, database))
+
+
+@router.get("/{task_id}/report", response_model=ReportRead)
+async def get_report(task_id: int, database: Session = Depends(get_db)) -> ReportRead:
+    return await ReportingService(database).report_for_task(_get_task_or_404(task_id, database))
 
 
 def _get_task_or_404(task_id: int, database: Session) -> ResearchTask:

@@ -116,3 +116,37 @@ export interface TrendAnalysis {
   limitation?: string | null
   [key: string]: unknown
 }
+
+export interface CreativeConcept {
+  id?: number
+  name: string
+  concept: string
+  target_audience: string[]
+  scenario: string[]
+  style: string | null
+  main_elements: string[]
+  trend_basis: string[]
+  differentiation: string | null
+  [key: string]: unknown
+}
+
+export interface ImagePrompt {
+  id?: number
+  concept_id?: number
+  concept_name?: string
+  concept?: CreativeConcept | string | null
+  trend_basis: string[]
+  hero_prompt: string | null
+  detail_prompt: string | null
+  lifestyle_prompt: string | null
+  cover_prompt: string | null
+  negative_prompt: string | null
+  [key: string]: unknown
+}
+
+export interface TaskReport {
+  summary: string | null
+  markdown: string | null
+  limitations: string[]
+  [key: string]: unknown
+}

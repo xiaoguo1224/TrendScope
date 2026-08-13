@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     api_prefix: str = "/api/v1"
     log_level: str = "INFO"
     data_dir: Path = PROJECT_ROOT / "data"
+    reports_dir: Path = PROJECT_ROOT / "reports"
     database_path: Path | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="TRENDSCOPE_")

@@ -1,6 +1,6 @@
 # TrendScope
 
-通用 AI 内容趋势研究 Agent。当前已完成 Stage 03（Ranking & AI Analysis）：页面化采集/分析配置、公开内容采集、互动排序、图文分析及趋势工作台。
+通用 AI 内容趋势研究 Agent。当前已完成 Version 1：页面化采集/分析配置、公开内容采集、互动排序、图文分析、趋势工作台、Creative Concept、图片 Prompt 与研究报告。
 
 ## 本地运行
 
@@ -48,4 +48,6 @@ uv run alembic revision --autogenerate -m "describe change"
 
 Ranking 依据真实互动指标、发布时间与多个 `ContentMetricSnapshot` 计算 Hot / Rising / 指标榜单；无历史快照时增长分数保持为空。Text、Vision 和趋势输出均经过结构化 Schema 校验，并与客观指标分开保存。当前 Provider 配置从 SQLite 读取，但未接入的供应商会安全降级到 Mock Provider，因此不需要真实 API Key 即可测试。
 
-遇到登录、验证码、访问验证或权限限制时，采集会停止并记录可解释的失败信息；系统不会尝试绕过任何平台访问控制。Creative Concept、图片 Prompt 与报告将在后续阶段实现。
+任务采集完成后会串联分析、趋势、Creative Concept、Prompt 和报告流程。Concept 由多个趋势来源聚合生成，不复刻单一内容；图片 Prompt 仅输出文本，不调用图片模型。每个任务在 `reports/{task_id}/` 下持久化 `report.md`、`report.json` 和 `prompts.md`，详情页的 Creative Concepts、图片 Prompt、报告 Tabs 可以直接查看结果。Concept 数量、Prompt 语言/风格、报告默认参数，以及 Concept/Prompt 模板都可在“系统配置”页面维护。
+
+遇到登录、验证码、访问验证或权限限制时，采集会停止并记录可解释的失败信息；系统不会尝试绕过任何平台访问控制。

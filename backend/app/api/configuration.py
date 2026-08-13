@@ -20,6 +20,16 @@ DEFAULT_SETTINGS: dict[str, tuple[object, str]] = {
     "collection_defaults": ({"max_items": 50, "time_range": "7d", "request_interval_ms": 1200, "scroll_interval_ms": 1000}, "Default collection parameters"),
     "browser_defaults": ({"headless": True, "timeout_seconds": 30, "download_images": True}, "Default browser parameters"),
 }
+DEFAULT_GENERIC_WEB_PLATFORM = {
+    "name": "generic-web",
+    "search_url_template": "https://www.bing.com/search?q={query}",
+    "selectors": {"item": "li.b_algo", "field_title": "h2", "field_url": "h2 a", "field_text": "p"},
+    "parser_rules": {"scroll_count": 2, "access_block_indicators": ["captcha", "verify you are human", "access denied"]},
+    "enabled": True,
+}
+DEFAULT_PROMPTS: tuple[dict[str, object], ...] = (
+    {"name": "query-expansion-default", "purpose": "query_expansion", "template": "Expand public content research keywords for {topic} on {platform}; retain all user keywords and add concise related terms. Research goals: {research_goals}.", "enabled": True},
+)
 DEFAULT_RANKING = {"name": "default", "enabled": True, "like_weight": 1.0, "favorite_weight": 1.2, "comment_weight": 1.5, "share_weight": 1.5, "view_weight": 0.1, "freshness_half_life_hours": 72, "growth_window_hours": 24}
 
 
@@ -29,9 +39,32 @@ def _not_found() -> HTTPException:
 
 @router.get("/settings", response_model=list[AppSettingRead])
 def list_settings(database: Session = Depends(get_db)) -> list[AppSettingRead]:
+    ensure_collection_defaults(database)
     repository = AppSettingRepository(database)
+    return list(repository.list())
+
+
+def ensure_collection_defaults(database: Session) -> None:
+    settings = AppSettingRepository(database)
+    existing_settings = {item.key for item in settings.list()}
     for key, (value, description) in DEFAULT_SETTINGS.items():
-        repository.upsert(key, {"value": value, "description": description}) if not any(item.key == key for item in repository.list()) else None
+        if key not in existing_settings:
+            settings.upsert(key, {"value": value, "description": description})
+    platforms = configuration_repositories(database)["platforms"]
+    if not any(item.name == "generic-web" for item in platforms.list()):
+        platforms.create(DEFAULT_GENERIC_WEB_PLATFORM)
+
+
+@router.post("/prompt-templates/reset-defaults", response_model=list[PromptTemplateRead])
+def reset_prompt_defaults(database: Session = Depends(get_db)) -> list[PromptTemplateRead]:
+    repository = configuration_repositories(database)["prompt-templates"]
+    existing = {item.name: item for item in repository.list()}
+    for default in DEFAULT_PROMPTS:
+        item = existing.get(str(default["name"]))
+        if item is None:
+            repository.create(default)
+        else:
+            repository.update(item, default)
     return list(repository.list())
 
 

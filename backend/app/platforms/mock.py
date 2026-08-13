@@ -19,3 +19,6 @@ class MockPlatformAdapter:
 
     async def download_media(self, content: dict[str, Any]) -> list[bytes]:
         return []
+
+    async def close(self) -> None:
+        return None

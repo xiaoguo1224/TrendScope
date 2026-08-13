@@ -11,9 +11,12 @@ export const resetRankingConfig = async (): Promise<RankingConfig> => (await cli
 export const listPlatformConfigs = async (): Promise<PlatformConfig[]> => (await client.get('/config/platforms')).data
 export const createPlatformConfig = async (payload: PlatformConfig): Promise<PlatformConfig> => (await client.post('/config/platforms', payload)).data
 export const updatePlatformConfig = async (id: number, payload: PlatformConfig): Promise<PlatformConfig> => (await client.put(`/config/platforms/${id}`, payload)).data
+export const deletePlatformConfig = async (id: number): Promise<void> => { await client.delete(`/config/platforms/${id}`) }
 export const listAIProviderConfigs = async (): Promise<AIProviderConfig[]> => (await client.get('/config/ai-providers')).data
 export const createAIProviderConfig = async (payload: AIProviderConfig): Promise<AIProviderConfig> => (await client.post('/config/ai-providers', payload)).data
 export const updateAIProviderConfig = async (id: number, payload: AIProviderConfig): Promise<AIProviderConfig> => (await client.put(`/config/ai-providers/${id}`, payload)).data
+export const deleteAIProviderConfig = async (id: number): Promise<void> => { await client.delete(`/config/ai-providers/${id}`) }
 export const listPromptTemplates = async (): Promise<PromptTemplate[]> => (await client.get('/config/prompt-templates')).data
 export const createPromptTemplate = async (payload: PromptTemplate): Promise<PromptTemplate> => (await client.post('/config/prompt-templates', payload)).data
 export const updatePromptTemplate = async (id: number, payload: PromptTemplate): Promise<PromptTemplate> => (await client.put(`/config/prompt-templates/${id}`, payload)).data
+export const deletePromptTemplate = async (id: number): Promise<void> => { await client.delete(`/config/prompt-templates/${id}`) }

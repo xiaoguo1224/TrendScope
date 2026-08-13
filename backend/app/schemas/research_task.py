@@ -31,3 +31,32 @@ class ResearchTaskRead(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+    current_stage: str | None = None
+    progress: int = Field(default=0, ge=0, le=100)
+    collected_count: int = Field(default=0, ge=0)
+
+
+class ContentItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    research_task_id: int
+    platform: str
+    external_id: str
+    url: str
+    title: str | None
+    text: str | None
+    author_name: str | None
+    published_at: datetime | None
+    like_count: int | None
+    favorite_count: int | None
+    comment_count: int | None
+    share_count: int | None
+    view_count: int | None
+    media_type: str | None
+    image_urls: list[str]
+    local_image_paths: list[str]
+    video_urls: list[str]
+    query_keyword: str | None
+    collected_at: datetime
+    raw_data: dict[str, object] | None

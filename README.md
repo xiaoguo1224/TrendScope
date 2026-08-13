@@ -1,6 +1,6 @@
 # TrendScope
 
-通用 AI 内容趋势研究 Agent。当前完成 Stage 01（Foundation）：本地 SQLite、任务基础 API、可配置的研究工作台和核心适配器抽象。
+通用 AI 内容趋势研究 Agent。当前已完成 Stage 02（Collection）：本地 SQLite、页面化采集配置、关键词扩展、公开内容采集及研究工作台。
 
 ## 本地运行
 
@@ -9,6 +9,7 @@
 ```powershell
 cd backend
 uv sync
+uv run playwright install chromium
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
@@ -39,8 +40,10 @@ uv run alembic revision --autogenerate -m "describe change"
 
 源码、文档、Alembic migrations 和空目录占位文件应纳入 Git。`.gitignore` 默认排除 `data/app.db`、任务下载数据、日志、报告运行产物、Python 虚拟环境和前端依赖。提交时请仅暂存本次阶段涉及的文件；建议每个 Stage 使用独立提交。
 
-## Stage 01 边界
+## 当前能力与运行边界
 
-已提供任务创建、列表、详情和系统配置持久化。真实采集、扩词、排行、LLM/VLM、趋势、Concept、Prompt 和报告生成均留待后续阶段。
+系统提供 `generic-web` 平台适配器：它从 SQLite 中读取搜索 URL、DOM Selector 和解析规则，通过 Playwright 仅处理正常浏览可见的公开 HTTP(S) 页面。平台配置、Browser 参数、下载图片开关、LLM Provider 基础配置及 Query Expansion Prompt 都可在“系统配置”页面维护。
 
-配置 API 位于 `/api/v1/config`：可管理采集与 Browser 默认参数、平台配置、AI Provider（读取时 API Key 掩码化）、Prompt 模板及 Ranking 参数。Stage 01 前端已暴露这些基础配置项；保存的 Ranking/Provider/Prompt 仅供后续阶段消费，不会在本阶段执行分析或调用模型。
+执行 `POST /api/v1/research/tasks/{id}/run` 后，系统保留用户关键词、用 Mock LLM 扩展查询词、采集并规范化内容、写入 `ContentItem` 与每次观察的 `ContentMetricSnapshot`，并可选下载公开图片到 `data/tasks/{task_id}/media/{content_id}/`。详情页可查看阶段、进度、扩展关键词、公开指标、缩略图及错误信息。
+
+遇到登录、验证码、访问验证或权限限制时，采集会停止并记录可解释的失败信息；系统不会尝试绕过任何平台访问控制。Ranking、文本/视觉分析、趋势、Concept、图片 Prompt 与报告将在后续阶段实现。

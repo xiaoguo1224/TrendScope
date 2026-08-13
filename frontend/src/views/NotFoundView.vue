@@ -1,0 +1,1 @@
+<template><section><el-result icon="warning" title="页面不存在" sub-title="请从左侧导航返回研究工作台。"><template #extra><el-button type="primary" @click="$router.push('/tasks')">返回任务列表</el-button></template></el-result></section></template>

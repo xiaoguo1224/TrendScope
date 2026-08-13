@@ -29,6 +29,9 @@ DEFAULT_GENERIC_WEB_PLATFORM = {
 }
 DEFAULT_PROMPTS: tuple[dict[str, object], ...] = (
     {"name": "query-expansion-default", "purpose": "query_expansion", "template": "Expand public content research keywords for {topic} on {platform}; retain all user keywords and add concise related terms. Research goals: {research_goals}.", "enabled": True},
+    {"name": "text-analysis-default", "purpose": "text_analysis", "template": "Analyze the content structure for {topic}. Identify reusable patterns; do not reproduce the source text.", "enabled": True},
+    {"name": "visual-analysis-default", "purpose": "visual_analysis", "template": "Analyze the local image using the specified generic visual fields. Put only industry-specific observations in domain_attributes.", "enabled": True},
+    {"name": "trend-analysis-default", "purpose": "trend_analysis", "template": "Aggregate patterns across multiple contents for {topic}; clearly state limitations when the sample is insufficient.", "enabled": True},
 )
 DEFAULT_RANKING = {"name": "default", "enabled": True, "like_weight": 1.0, "favorite_weight": 1.2, "comment_weight": 1.5, "share_weight": 1.5, "view_weight": 0.1, "freshness_half_life_hours": 72, "growth_window_hours": 24}
 
@@ -53,6 +56,20 @@ def ensure_collection_defaults(database: Session) -> None:
     platforms = configuration_repositories(database)["platforms"]
     if not any(item.name == "generic-web" for item in platforms.list()):
         platforms.create(DEFAULT_GENERIC_WEB_PLATFORM)
+
+
+def ensure_analysis_defaults(database: Session) -> None:
+    """Seed editable analysis defaults once; runtime behavior always reads SQLite."""
+    ensure_collection_defaults(database)
+    repositories = configuration_repositories(database)
+    prompts = repositories["prompt-templates"]
+    existing_prompts = {item.name for item in prompts.list()}
+    for default in DEFAULT_PROMPTS:
+        if str(default["name"]) not in existing_prompts:
+            prompts.create(default)
+    ranking = repositories["ranking-configs"]
+    if not any(item.name == "default" for item in ranking.list()):
+        ranking.create(DEFAULT_RANKING)
 
 
 @router.post("/prompt-templates/reset-defaults", response_model=list[PromptTemplateRead])
@@ -86,6 +103,7 @@ def _crud_routes(
 ) -> None:
     @router.get(path, response_model=list[read_schema])
     def list_items(database: Session = Depends(get_db)) -> list[Any]:
+        ensure_analysis_defaults(database)
         return list(configuration_repositories(database)[repository_key].list())
 
     @router.post(path, response_model=read_schema, status_code=status.HTTP_201_CREATED)

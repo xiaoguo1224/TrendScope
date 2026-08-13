@@ -6,7 +6,10 @@ from app.models.content import ContentItem
 from app.models.research_task import ResearchTask, ResearchTaskStatus
 from app.repositories.research_task import ResearchTaskRepository
 from app.schemas.research_task import ContentItemRead, ResearchTaskCreate, ResearchTaskRead
+from app.schemas.analysis import AnalysisItemRead, RankingsRead, TrendAnalysisRead
+from app.services.analysis import AnalysisService
 from app.services.collection import ContentCollectionService
+from app.services.ranking import RankingService
 
 router = APIRouter(prefix="/research/tasks", tags=["research-tasks"])
 
@@ -44,6 +47,31 @@ def list_contents(task_id: int, database: Session = Depends(get_db)) -> list[Con
     if task is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research task not found")
     return list(database.query(ContentItem).filter(ContentItem.research_task_id == task_id).order_by(ContentItem.collected_at.desc()))
+
+
+@router.get("/{task_id}/rankings", response_model=RankingsRead)
+def get_rankings(task_id: int, database: Session = Depends(get_db)) -> RankingsRead:
+    _get_task_or_404(task_id, database)
+    return RankingService(database).rank_task(task_id)
+
+
+@router.get("/{task_id}/analysis", response_model=list[AnalysisItemRead])
+async def get_analysis(task_id: int, database: Session = Depends(get_db)) -> list[AnalysisItemRead]:
+    task = _get_task_or_404(task_id, database)
+    return await AnalysisService(database).analyze_task(task)
+
+
+@router.get("/{task_id}/trends", response_model=TrendAnalysisRead)
+async def get_trends(task_id: int, database: Session = Depends(get_db)) -> TrendAnalysisRead:
+    task = _get_task_or_404(task_id, database)
+    return await AnalysisService(database).trends_for_task(task)
+
+
+def _get_task_or_404(task_id: int, database: Session) -> ResearchTask:
+    task = ResearchTaskRepository(database).get(task_id)
+    if task is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research task not found")
+    return task
 
 
 def _task_response(task: ResearchTask, database: Session) -> ResearchTaskRead:

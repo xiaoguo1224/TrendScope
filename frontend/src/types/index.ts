@@ -8,3 +8,111 @@ export interface RankingConfig { id?: number; name: string; enabled: boolean; li
 export interface PlatformConfig { id?: number; name: string; search_url_template: string | null; selectors: Record<string, string>; parser_rules: Record<string, unknown>; enabled: boolean }
 export interface AIProviderConfig { id?: number; name: string; provider_type: string; base_url: string | null; model_name: string | null; api_key?: string | null; timeout_seconds: number; max_retries: number; enabled: boolean }
 export interface PromptTemplate { id?: number; name: string; purpose: string; template: string; enabled: boolean }
+
+export type PublicMetricKey = 'like_count' | 'favorite_count' | 'comment_count' | 'share_count' | 'view_count'
+export interface RankingItem {
+  content_item_id?: number
+  content_id?: number
+  title?: string | null
+  url?: string
+  metrics?: Partial<Record<PublicMetricKey, number>>
+  rank?: number | null
+  engagement_score?: number | null
+  freshness_score?: number | null
+  growth_score?: number | null
+  hot_score?: number | null
+  item?: ContentItem
+  content?: ContentItem
+  [key: string]: unknown
+}
+export interface TaskRankings {
+  hot: RankingItem[]
+  rising: RankingItem[]
+  boards: Record<string, RankingItem[]>
+}
+export interface TextAnalysis {
+  hook_type?: string | null
+  title_structure?: string | null
+  opening_hook?: string | null
+  writing_style?: string | null
+  emotion?: string | null
+  pain_points?: string[]
+  benefits?: string[]
+  target_audience?: string[]
+  scenario?: string[]
+  cta?: string | null
+  hashtags?: string[]
+  topic_tags?: string[]
+  reusable_patterns?: string[]
+  [key: string]: unknown
+}
+export interface VisualAnalysis {
+  subject?: string | null
+  main_colors?: string[]
+  secondary_colors?: string[]
+  style?: string | null
+  composition?: string | null
+  camera_angle?: string | null
+  lighting?: string | null
+  background?: string | null
+  visual_focus?: string | null
+  scene?: string | null
+  mood?: string | null
+  target_audience?: string[]
+  notable_elements?: string[]
+  reusable_visual_patterns?: string[]
+  domain_attributes?: Record<string, unknown>
+  confidence?: number | null
+  [key: string]: unknown
+}
+export interface ContentAnalysis {
+  content_item_id?: number
+  content_id?: number
+  title?: string | null
+  url?: string
+  content?: ContentItem
+  item?: ContentItem
+  text_analysis?: TextAnalysis | null
+  visual_analysis?: VisualAnalysis | null
+  visual_analyses?: VisualAnalysis[]
+  local_image_paths?: string[]
+  objective_facts?: Record<string, unknown>
+  content_analysis?: {
+    why_it_may_be_popular?: string | null
+    core_content_elements?: string[]
+    core_visual_elements?: string[]
+    target_audience?: string[]
+    emotional_value?: string | null
+    reusable_patterns?: string[]
+    trend_tags?: string[]
+    evidence?: string[] | Record<string, unknown>
+    limitations?: string[]
+  } | null
+  analysis_error?: string | null
+  why_it_may_be_popular?: string | null
+  core_content_elements?: string[]
+  core_visual_elements?: string[]
+  target_audience?: string[]
+  emotional_value?: string | null
+  reusable_patterns?: string[]
+  trend_tags?: string[]
+  evidence?: string[] | Record<string, unknown>
+  limitations?: string[]
+  error_message?: string | null
+  [key: string]: unknown
+}
+export interface TaskAnalysisResult { items: ContentAnalysis[]; limitations: string[] }
+export interface TrendAnalysis {
+  hot_topics?: string[]
+  rising_topics?: string[]
+  visual_patterns?: string[]
+  copywriting_patterns?: string[]
+  audience_patterns?: string[]
+  scenario_patterns?: string[]
+  style_patterns?: string[]
+  domain_patterns?: string[]
+  insufficient_data?: boolean
+  limitations?: string[]
+  limitation?: string | null
+  [key: string]: unknown
+}

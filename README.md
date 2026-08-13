@@ -1,6 +1,6 @@
 # TrendScope
 
-通用 AI 内容趋势研究 Agent。当前已完成 Stage 02（Collection）：本地 SQLite、页面化采集配置、关键词扩展、公开内容采集及研究工作台。
+通用 AI 内容趋势研究 Agent。当前已完成 Stage 03（Ranking & AI Analysis）：页面化采集/分析配置、公开内容采集、互动排序、图文分析及趋势工作台。
 
 ## 本地运行
 
@@ -46,4 +46,6 @@ uv run alembic revision --autogenerate -m "describe change"
 
 执行 `POST /api/v1/research/tasks/{id}/run` 后，系统保留用户关键词、用 Mock LLM 扩展查询词、采集并规范化内容、写入 `ContentItem` 与每次观察的 `ContentMetricSnapshot`，并可选下载公开图片到 `data/tasks/{task_id}/media/{content_id}/`。详情页可查看阶段、进度、扩展关键词、公开指标、缩略图及错误信息。
 
-遇到登录、验证码、访问验证或权限限制时，采集会停止并记录可解释的失败信息；系统不会尝试绕过任何平台访问控制。Ranking、文本/视觉分析、趋势、Concept、图片 Prompt 与报告将在后续阶段实现。
+Ranking 依据真实互动指标、发布时间与多个 `ContentMetricSnapshot` 计算 Hot / Rising / 指标榜单；无历史快照时增长分数保持为空。Text、Vision 和趋势输出均经过结构化 Schema 校验，并与客观指标分开保存。当前 Provider 配置从 SQLite 读取，但未接入的供应商会安全降级到 Mock Provider，因此不需要真实 API Key 即可测试。
+
+遇到登录、验证码、访问验证或权限限制时，采集会停止并记录可解释的失败信息；系统不会尝试绕过任何平台访问控制。Creative Concept、图片 Prompt 与报告将在后续阶段实现。

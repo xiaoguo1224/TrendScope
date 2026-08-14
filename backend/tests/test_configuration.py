@@ -1,4 +1,9 @@
+import pytest
 from fastapi.testclient import TestClient
+
+from app.browser.mock import MockBrowserAdapter
+from app.models.configuration import AIProviderConfig
+from app.services.provider_configuration_test import ProviderConfigurationTestService
 
 
 def test_setting_defaults_are_persisted_and_updatable(client: TestClient) -> None:
@@ -35,6 +40,42 @@ def test_system_browser_configuration_requires_a_local_cdp_endpoint(client: Test
     assert remote.status_code == 422
     local = client.put("/api/v1/config/settings/browser_defaults", json={"value": {"mode": "system_cdp", "cdp_endpoint": "http://127.0.0.1:9222", "headers": {}}})
     assert local.status_code == 200
+
+
+def test_system_browser_connection_test_uses_a_temporary_blank_tab(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services.collection import ContentCollectionService
+
+    browser = MockBrowserAdapter()
+    monkeypatch.setattr(ContentCollectionService, "_create_browser", staticmethod(lambda _: browser))
+    client.put("/api/v1/config/settings/browser_defaults", json={"value": {"mode": "system_cdp", "cdp_endpoint": "http://127.0.0.1:9222", "headers": {}}})
+
+    response = client.post("/api/v1/config/browser/test-connection")
+
+    assert response.status_code == 200
+    assert response.json()["success"] is True
+    assert browser.current_url == "about:blank"
+
+
+@pytest.mark.anyio
+async def test_ai_provider_configuration_test_uses_synthetic_input() -> None:
+    class FakeProvider:
+        last_endpoint = "https://provider.example/v1/responses"
+
+        async def generate_structured(self, *, prompt, context):
+            assert "llm" in prompt
+            return {"ok": True}
+
+        async def analyze_image_bytes(self, *, image_bytes, mime_type, prompt, context):
+            assert mime_type == "image/png"
+            assert image_bytes
+            return {"ok": True}
+
+    config = AIProviderConfig(name="test", provider_type="vision", base_url="https://provider.example", model_name="model", api_key="key", enabled=True)
+    result = await ProviderConfigurationTestService(provider_factory=lambda _: FakeProvider()).run(config)  # type: ignore[arg-type]
+
+    assert result.success is True
+    assert result.endpoint == "https://provider.example/v1/responses"
+    assert result.response_preview == '{"ok": true}'
 
 
 def test_ranking_config_crud(client: TestClient) -> None:

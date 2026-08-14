@@ -16,6 +16,7 @@ from app.models.content import ContentItem
 from app.models.research_task import ResearchTask, ResearchTaskStatus
 from app.providers.llm import LLMProvider, MockLLMProvider
 from app.providers.vision import MockVisionProvider, VisionProvider
+from app.providers.openai_compatible import OpenAICompatibleProvider
 from app.schemas.analysis import (
     AnalysisItemRead, ContentAnalysis, RankedContentItem, TextAnalysis, TrendAnalysisRead, VisualAnalysis,
 )
@@ -31,8 +32,7 @@ class AnalysisService:
         self, database: Session, *, llm_provider: LLMProvider | None = None, vision_provider: VisionProvider | None = None,
     ) -> None:
         self.database = database
-        # Provider selection is database-driven. Unsupported configured vendors intentionally degrade to the
-        # deterministic mock until a concrete adapter is added, so no external API/key is required in Stage 03.
+        # An enabled, complete provider configuration takes precedence; mock providers keep offline use possible.
         self.llm_provider = llm_provider or self._llm_provider()
         self.vision_provider = vision_provider or self._vision_provider()
 
@@ -124,12 +124,22 @@ class AnalysisService:
         return value.replace("{topic}", task.topic).replace("{platform}", task.platform).replace("{research_goals}", task.research_goals or "")
 
     def _llm_provider(self) -> LLMProvider:
-        self._configured_provider("llm")
-        return MockLLMProvider()
+        configured = self._configured_provider("llm")
+        return self._configured_or_mock(configured, MockLLMProvider())
 
     def _vision_provider(self) -> VisionProvider:
-        self._configured_provider("vision")
-        return MockVisionProvider()
+        configured = self._configured_provider("vision")
+        return self._configured_or_mock(configured, MockVisionProvider())
+
+    @staticmethod
+    def _configured_or_mock(configured: AIProviderConfig | None, fallback: LLMProvider | VisionProvider) -> LLMProvider | VisionProvider:
+        if configured is None:
+            return fallback
+        try:
+            return OpenAICompatibleProvider(configured)
+        except ValueError as error:
+            logger.warning("analysis_provider_configuration_incomplete type=%s name=%s detail=%s", configured.provider_type, configured.name, error)
+            return fallback
 
     def _configured_provider(self, provider_type: str) -> AIProviderConfig | None:
         # Deliberately never log api_key or return it to callers.

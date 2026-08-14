@@ -22,6 +22,12 @@ def test_collection_defaults_include_enabled_generic_public_adapter(client) -> N
     assert client.get("/api/v1/config/settings").status_code == 200
     platform = next(item for item in client.get("/api/v1/config/platforms").json() if item["name"] == "generic-web")
     assert platform["enabled"] is True
+
+
+def test_xiaohongshu_default_waits_for_dynamic_search_cards(client) -> None:
+    client.get("/api/v1/config/settings")
+    platform = next(item for item in client.get("/api/v1/config/platforms").json() if item["name"] == "xiaohongshu")
+    assert platform["parser_rules"]["result_wait_ms"] == 2500
     assert platform["search_url_template"].startswith("https://")
 
 
@@ -62,6 +68,20 @@ async def test_platform_configuration_test_uses_nested_selectors_and_returns_fir
 
 
 @pytest.mark.anyio
+async def test_platform_configuration_test_reports_no_matching_cards(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    config = PlatformConfig(name="empty-test", search_url_template="https://example.test/search?q={query}", selectors={"search": {"result_container": ".card"}}, parser_rules={})
+    session.add(config)
+    session.commit()
+
+    result = await PlatformConfigurationTestService(session, browser_factory=lambda _: MockBrowserAdapter([])).run(config, query="coffee", limit=50)
+
+    assert result.success is False
+    assert "no matching search cards" in str(result.message)
+
+
+@pytest.mark.anyio
 async def test_collection_expands_persists_media_and_snapshots(client, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     # Use the API-created database session by taking its dependency override iterator.
     from app.core.database import get_db
@@ -96,7 +116,7 @@ async def test_collection_expands_persists_media_and_snapshots(client, monkeypat
 
 
 @pytest.mark.anyio
-async def test_collection_marks_partial_after_per_item_failure(client) -> None:
+async def test_collection_skips_placeholder_cards_without_valid_urls(client) -> None:
     from app.core.database import get_db
     session: Session = next(client.app.dependency_overrides[get_db]())
     session.add(PlatformConfig(name="generic-web", search_url_template="https://example.test/?q={query}", selectors={}, parser_rules={}))
@@ -105,8 +125,8 @@ async def test_collection_marks_partial_after_per_item_failure(client) -> None:
     session.commit()
     browser = MockBrowserAdapter([{}])
     result = await ContentCollectionService(session, browser_factory=lambda _: browser).run(task)
-    assert result.status == ResearchTaskStatus.PARTIAL
-    assert result.error_message
+    assert result.status == ResearchTaskStatus.COMPLETED
+    assert result.error_message is None
 
 
 def test_run_and_contents_endpoints_report_progress(client, monkeypatch: pytest.MonkeyPatch) -> None:

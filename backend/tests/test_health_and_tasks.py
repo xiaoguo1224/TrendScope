@@ -1,8 +1,16 @@
 from fastapi.testclient import TestClient
+from datetime import UTC, datetime
+
+from app.core.time import as_shanghai_time
 
 
 def test_health(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_naive_sqlite_timestamps_are_serialized_as_east_eight() -> None:
+    assert as_shanghai_time(datetime(2026, 8, 14, 8, 0)).isoformat() == "2026-08-14T16:00:00+08:00"
+    assert as_shanghai_time(datetime(2026, 8, 14, 8, 0, tzinfo=UTC)).isoformat() == "2026-08-14T16:00:00+08:00"
 
 
 def test_create_list_and_get_research_task(client: TestClient) -> None:

@@ -1,8 +1,13 @@
+from pathlib import Path
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.configuration import ensure_collection_defaults
 from app.core.database import get_db
+from app.core.config import get_settings
 from app.models.configuration import PlatformConfig
 from app.models.content import ContentItem
 from app.models.research_task import ResearchTask, ResearchTaskStatus
@@ -90,6 +95,35 @@ async def get_prompts(task_id: int, database: Session = Depends(get_db)) -> list
 @router.get("/{task_id}/report", response_model=ReportRead)
 async def get_report(task_id: int, database: Session = Depends(get_db)) -> ReportRead:
     return await ReportingService(database).report_for_task(_get_task_or_404(task_id, database))
+
+
+@router.get("/{task_id}/report/download")
+async def download_report(
+    task_id: int, file_format: Literal["markdown", "json", "prompts"] = "markdown", database: Session = Depends(get_db),
+) -> FileResponse:
+    report = await ReportingService(database).report_for_task(_get_task_or_404(task_id, database))
+    files = {
+        "markdown": (Path(report.report_path), "report.md", "text/markdown"),
+        "json": (Path(report.report_path).with_name("report.json"), "report.json", "application/json"),
+        "prompts": (Path(report.prompts_path), "prompts.md", "text/markdown"),
+    }
+    path, filename, media_type = files[file_format]
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report export file is unavailable")
+    return FileResponse(path, media_type=media_type, filename=f"research-task-{task_id}-{filename}")
+
+
+@router.get("/{task_id}/contents/{content_id}/media/{filename}")
+def get_local_media(task_id: int, content_id: int, filename: str, database: Session = Depends(get_db)) -> FileResponse:
+    content = database.query(ContentItem).filter(
+        ContentItem.id == content_id, ContentItem.research_task_id == task_id,
+    ).one_or_none()
+    if content is None or Path(filename).name != filename:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local media file not found")
+    path = get_settings().data_dir / "tasks" / str(task_id) / "media" / str(content_id) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Local media file not found")
+    return FileResponse(path)
 
 
 def _get_task_or_404(task_id: int, database: Session) -> ResearchTask:

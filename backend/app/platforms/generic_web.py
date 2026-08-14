@@ -38,6 +38,9 @@ class GenericWebPlatformAdapter:
         )]
         if await self.browser.is_access_blocked(indicators):
             raise PublicAccessBlockedError("Public access was blocked by a login, verification, or permission requirement")
+        result_wait_ms = int(self.config.parser_rules.get("result_wait_ms", 0))
+        if result_wait_ms > 0:
+            await asyncio.sleep(min(result_wait_ms, 10_000) / 1000)
         scroll_count = int(self.config.parser_rules.get("scroll_count", 0))
         scroll_amount = int(self.config.parser_rules.get("scroll_amount", 800))
         scroll_interval_ms = int(self.config.parser_rules.get("scroll_interval_ms", 0))
@@ -49,7 +52,8 @@ class GenericWebPlatformAdapter:
         item_selector = selectors.pop("result_container", None) or self._string(self.config.selectors.get("item"))
         field_selectors = selectors or {key.removeprefix("field_"): value for key, value in self.config.selectors.items() if key.startswith("field_") and isinstance(value, str)}
         extracted = await self.browser.extract_visible_content(item_selector, field_selectors)
-        return [self._normalize(item, query) for item in extracted[:limit]]
+        normalized = [self._normalize(item, query) for item in extracted[:limit]]
+        return [item for item in normalized if item["external_id"] and item["url"]]
 
     async def open_content(self, url: str) -> None:
         await self.browser.open(url)

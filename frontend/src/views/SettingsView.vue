@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { createAIProviderConfig, createPlatformConfig, createPromptTemplate, createRankingConfig, deleteAIProviderConfig, deletePlatformConfig, deletePromptTemplate, listAIProviderConfigs, listPlatformConfigs, listPromptTemplates, listRankingConfigs, listSettings, resetRankingConfig, resetSettings, testPlatformConfig, updateAIProviderConfig, updatePlatformConfig, updatePromptTemplate, updateRankingConfig, updateSetting } from '@/api/configuration'
-import type { AIProviderConfig, PlatformConfig, PlatformConfigTestResult, PromptTemplate, RankingConfig } from '@/types'
+import { createAIProviderConfig, createPlatformConfig, createPromptTemplate, createRankingConfig, deleteAIProviderConfig, deletePlatformConfig, deletePromptTemplate, listAIProviderConfigs, listPlatformConfigs, listPromptTemplates, listRankingConfigs, listSettings, resetRankingConfig, resetSettings, testAIProviderConfig, testPlatformConfig, testSystemBrowserConnection, updateAIProviderConfig, updatePlatformConfig, updatePromptTemplate, updateRankingConfig, updateSetting } from '@/api/configuration'
+import type { AIProviderConfig, AIProviderConfigTestResult, BrowserConnectionTestResult, PlatformConfig, PlatformConfigTestResult, PromptTemplate, RankingConfig } from '@/types'
 
 type CommonPlatformSelectors = { resultContainer: string; contentLink: string; cover: string; searchTitle: string; searchAuthor: string; publishTime: string; searchLikeCount: string; detailTitle: string; detailContent: string; detailImage: string; detailAuthor: string; detailLikeCount: string; detailCollectCount: string; detailCommentCount: string }
 type EditablePlatform = PlatformConfig & { selectorsText: string; parserRulesText: string; common: CommonPlatformSelectors }
@@ -13,11 +13,15 @@ const loading = ref(true)
 const collection = reactive({ max_items: 50, time_range: '7d', request_interval_ms: 1200, scroll_interval_ms: 1000 })
 const browser = reactive({ mode: 'isolated' as 'isolated' | 'system_cdp', cdp_endpoint: 'http://127.0.0.1:9222', headless: true, timeout_seconds: 30, download_images: true, headers: {} as Record<string, string> })
 const browserHeadersText = ref('')
+const browserConnectionTesting = ref(false)
+const browserConnectionResult = ref<BrowserConnectionTestResult | null>(null)
 const reportDefaults = reactive({ concept_count: 12, prompt_language: 'English', prompt_style: 'editorial', include_markdown: true })
 const ranking = reactive<RankingConfig>({ name: 'default', enabled: true, like_weight: 1, favorite_weight: 1.2, comment_weight: 1.5, share_weight: 1.5, view_weight: 0.1, freshness_half_life_hours: 72, growth_window_hours: 24 })
 const platforms = ref<EditablePlatform[]>([])
 const platformTesting = ref<number | null>(null)
 const platformTestResults = reactive<Record<number, PlatformConfigTestResult>>({})
+const providerTesting = ref<number | null>(null)
+const providerTestResults = reactive<Record<number, AIProviderConfigTestResult>>({})
 const providers = ref<EditableProvider[]>([])
 const templates = ref<PromptTemplate[]>([])
 const llmProviders = computed(() => providers.value.filter((item) => item.provider_type === 'llm'))
@@ -79,6 +83,7 @@ function parseHeaders(value: string): Record<string, string> {
   return headers
 }
 function imageCount(value: unknown): string { return Array.isArray(value) ? `${value.length} 张` : '—' }
+function providerTestDescription(result: AIProviderConfigTestResult): string { return `调用地址：${result.endpoint}${result.response_preview ? `；响应：${result.response_preview}` : ''}` }
 
 async function load(): Promise<void> {
   loading.value = true
@@ -104,6 +109,16 @@ async function saveDefaults(): Promise<void> {
     ElMessage.success('默认参数已保存到 SQLite')
   } finally { saving.value = false }
 }
+async function testBrowserConnection(): Promise<void> {
+  browserConnectionTesting.value = true
+  browserConnectionResult.value = null
+  try {
+    browser.headers = parseHeaders(browserHeadersText.value)
+    await updateSetting('browser_defaults', { ...browser }, 'Default browser parameters')
+    browserConnectionResult.value = await testSystemBrowserConnection()
+    ElMessage[browserConnectionResult.value.success ? 'success' : 'warning'](browserConnectionResult.value.success ? '系统浏览器已连接' : '系统浏览器连接失败')
+  } finally { browserConnectionTesting.value = false }
+}
 async function restoreDefaults(): Promise<void> { const [settings, defaultRanking] = await Promise.all([resetSettings(), resetRankingConfig()]); Object.assign(collection, settings.find((item) => item.key === 'collection_defaults')?.value); Object.assign(browser, settings.find((item) => item.key === 'browser_defaults')?.value); browserHeadersText.value = formatHeaders(browser.headers); Object.assign(reportDefaults, settings.find((item) => item.key === 'report_defaults')?.value); Object.assign(ranking, defaultRanking); ElMessage.success('默认配置已恢复') }
 async function savePlatform(item: EditablePlatform): Promise<void> {
   const selectors = mergeCommonSelectors(item, parseSelectors(item.selectorsText))
@@ -123,6 +138,14 @@ async function saveProvider(item: EditableProvider): Promise<void> {
   const saved = item.id ? await updateAIProviderConfig(item.id, payload) : await createAIProviderConfig(payload)
   const next = providerForEdit(saved); const index = providers.value.indexOf(item); if (index === -1) providers.value.push(next); else providers.value[index] = next
   ElMessage.success('AI Provider 配置已保存')
+}
+async function runProviderTest(item: EditableProvider): Promise<void> {
+  if (!item.id) { ElMessage.warning('请先保存模型配置，再执行测试'); return }
+  providerTesting.value = item.id
+  try {
+    providerTestResults[item.id] = await testAIProviderConfig(item.id)
+    ElMessage[providerTestResults[item.id].success ? 'success' : 'warning'](providerTestResults[item.id].success ? '模型配置测试成功' : '模型配置测试未通过')
+  } finally { providerTesting.value = null }
 }
 async function saveTemplate(item: PromptTemplate): Promise<void> { const saved = item.id ? await updatePromptTemplate(item.id, item) : await createPromptTemplate(item); const index = templates.value.indexOf(item); if (index === -1) templates.value.push(saved); else templates.value[index] = saved; ElMessage.success('Prompt 模板已保存') }
 async function remove(item: PlatformConfig | AIProviderConfig | PromptTemplate, kind: 'platform' | 'provider' | 'template'): Promise<void> {
@@ -155,7 +178,7 @@ onMounted(load)
       <el-tab-pane label="采集与浏览器">
         <el-form label-width="170px"><el-form-item label="默认最大采集数"><el-input-number v-model="collection.max_items" :min="1" :max="500" /></el-form-item><el-form-item label="默认时间范围"><el-select v-model="collection.time_range"><el-option value="24h" label="近 24 小时" /><el-option value="7d" label="近 7 天" /><el-option value="30d" label="近 30 天" /></el-select></el-form-item><el-form-item label="请求间隔 (ms)"><el-input-number v-model="collection.request_interval_ms" :min="0" /></el-form-item><el-form-item label="滚动/等待间隔 (ms)"><el-input-number v-model="collection.scroll_interval_ms" :min="0" /></el-form-item></el-form>
         <el-divider content-position="left">Browser</el-divider>
-        <el-form label-width="170px"><el-form-item label="浏览器模式"><el-radio-group v-model="browser.mode"><el-radio value="isolated">隔离 Playwright</el-radio><el-radio value="system_cdp">连接系统浏览器</el-radio></el-radio-group><div class="form-help">“连接系统浏览器”会复用专用 Chrome / Edge 配置目录中已登录的会话；不会读取或导出 Cookie。</div></el-form-item><el-form-item v-if="browser.mode === 'system_cdp'" label="本机 CDP 地址"><el-input v-model="browser.cdp_endpoint" placeholder="http://127.0.0.1:9222" /><div class="form-help">仅允许 localhost。请先按下方说明启动浏览器并完成手动登录；测试和研究任务都不会关闭该浏览器。</div></el-form-item><el-alert v-if="browser.mode === 'system_cdp'" class="browser-help" type="warning" :closable="false" title="首次登录：关闭 Chrome / Edge 后，用带 --remote-debugging-port 和独立 --user-data-dir 的命令启动；在新窗口手动登录目标平台，再保存并测试配置。" /><el-form-item label="无头模式" v-if="browser.mode === 'isolated'"><el-switch v-model="browser.headless" /></el-form-item><el-form-item label="超时时间 (秒)"><el-input-number v-model="browser.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="下载公开图片"><el-switch v-model="browser.download_images" /></el-form-item><el-form-item label="请求 Header"><el-input v-model="browserHeadersText" type="textarea" :rows="5" placeholder="Cookie: session=value&#10;Authorization: Bearer token" /><div class="form-help">每行一个“名称: 值”，也可粘贴 JSON 对象；留空代表不发送任何自定义 Header。已保存的 Cookie/Token 会以掩码显示，不编辑可保留，删除该行后保存则清空。</div></el-form-item></el-form>
+        <el-form label-width="170px"><el-form-item label="浏览器模式"><el-radio-group v-model="browser.mode"><el-radio value="isolated">隔离 Playwright</el-radio><el-radio value="system_cdp">连接系统浏览器</el-radio></el-radio-group><div class="form-help">“连接系统浏览器”会复用专用 Chrome / Edge 配置目录中已登录的会话；不会读取或导出 Cookie。</div></el-form-item><el-form-item v-if="browser.mode === 'system_cdp'" label="本机 CDP 地址"><el-input v-model="browser.cdp_endpoint" placeholder="http://127.0.0.1:9222" /><div class="form-help">仅允许 localhost。请先按下方说明启动浏览器并完成手动登录；测试和研究任务都不会关闭该浏览器。</div></el-form-item><el-alert v-if="browser.mode === 'system_cdp'" class="browser-help" type="warning" :closable="false" title="首次登录：关闭 Chrome / Edge 后，用带 --remote-debugging-port 和独立 --user-data-dir 的命令启动；在新窗口手动登录目标平台，再保存并测试配置。" /><div v-if="browser.mode === 'system_cdp'" class="browser-connection-test"><el-button type="primary" plain :loading="browserConnectionTesting" @click="testBrowserConnection">测试系统浏览器连接</el-button><el-alert v-if="browserConnectionResult" class="browser-connection-result" :type="browserConnectionResult.success ? 'success' : 'error'" :closable="false" :title="browserConnectionResult.success ? '系统浏览器连接成功' : '系统浏览器连接失败'" :description="browserConnectionResult.message" /></div><el-form-item label="无头模式" v-if="browser.mode === 'isolated'"><el-switch v-model="browser.headless" /></el-form-item><el-form-item label="超时时间 (秒)"><el-input-number v-model="browser.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="下载公开图片"><el-switch v-model="browser.download_images" /></el-form-item><el-form-item label="请求 Header"><el-input v-model="browserHeadersText" type="textarea" :rows="5" placeholder="Cookie: session=value&#10;Authorization: Bearer token" /><div class="form-help">每行一个“名称: 值”，也可粘贴 JSON 对象；留空代表不发送任何自定义 Header。已保存的 Cookie/Token 会以掩码显示，不编辑可保留，删除该行后保存则清空。</div></el-form-item></el-form>
       </el-tab-pane>
       <el-tab-pane label="排名与报告">
         <el-alert type="info" :closable="false" title="Ranking 参数用于 Hot、Rising 与指标榜单；报告参数控制 Concept 与文本 Prompt 输出。" />
@@ -179,9 +202,9 @@ onMounted(load)
         </el-card>
       </el-tab-pane>
       <el-tab-pane label="AI Provider">
-        <el-alert type="info" :closable="false" title="LLM 与 Vision Provider 在同一处维护。未接入供应商客户端时，系统会安全降级到 Mock；API Key 只以掩码回显。" />
-        <el-divider content-position="left">LLM Provider</el-divider><el-button class="add-button" @click="addProvider('llm')">新增 LLM Provider</el-button><el-card v-for="item in llmProviders" :key="item.id ?? item.name" class="config-card"><el-form label-width="150px"><el-form-item label="名称"><el-input v-model="item.name" /></el-form-item><el-form-item label="Base URL"><el-input v-model="item.base_url" /></el-form-item><el-form-item label="模型"><el-input v-model="item.model_name" /></el-form-item><el-form-item label="API Key"><el-input v-model="item.api_key" show-password :placeholder="item.savedKeyMask ? `已保存：${item.savedKeyMask}；留空不覆盖` : '请输入 API Key'" /></el-form-item><el-form-item label="超时 (秒)"><el-input-number v-model="item.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="最大重试次数"><el-input-number v-model="item.max_retries" :min="0" :max="10" /></el-form-item><el-form-item label="启用"><el-switch v-model="item.enabled" /></el-form-item><el-button type="primary" @click="saveProvider(item)">保存</el-button><el-button @click="remove(item, 'provider')">删除</el-button></el-form></el-card>
-        <el-divider content-position="left">Vision Provider</el-divider><el-button class="add-button" @click="addProvider('vision')">新增 Vision Provider</el-button><el-card v-for="item in visionProviders" :key="item.id ?? item.name" class="config-card"><el-form label-width="150px"><el-form-item label="名称"><el-input v-model="item.name" /></el-form-item><el-form-item label="Base URL"><el-input v-model="item.base_url" /></el-form-item><el-form-item label="模型"><el-input v-model="item.model_name" /></el-form-item><el-form-item label="API Key"><el-input v-model="item.api_key" show-password :placeholder="item.savedKeyMask ? `已保存：${item.savedKeyMask}；留空不覆盖` : '请输入 API Key'" /></el-form-item><el-form-item label="超时 (秒)"><el-input-number v-model="item.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="最大重试次数"><el-input-number v-model="item.max_retries" :min="0" :max="10" /></el-form-item><el-form-item label="启用"><el-switch v-model="item.enabled" /></el-form-item><el-button type="primary" @click="saveProvider(item)">保存</el-button><el-button @click="remove(item, 'provider')">删除</el-button></el-form></el-card>
+        <el-alert type="info" :closable="false" title="LLM 与 Vision Provider 在同一处维护。Base URL 的路径决定适配器：支持 OpenAI 兼容（/v1、/responses、/chat 或 /chat/completions）、Anthropic（/messages）、Gemini（:generateContent）和 Ollama（/api/chat、/api/generate）。不需要另选调用协议；API Key 只以掩码回显。" />
+        <el-divider content-position="left">LLM Provider</el-divider><el-button class="add-button" @click="addProvider('llm')">新增 LLM Provider</el-button><el-card v-for="item in llmProviders" :key="item.id ?? item.name" class="config-card"><el-form label-width="150px"><el-form-item label="名称"><el-input v-model="item.name" /></el-form-item><el-form-item label="Base URL"><el-input v-model="item.base_url" /></el-form-item><el-form-item label="模型"><el-input v-model="item.model_name" /></el-form-item><el-form-item label="API Key"><el-input v-model="item.api_key" show-password :placeholder="item.savedKeyMask ? `已保存：${item.savedKeyMask}；留空不覆盖` : '请输入 API Key'" /></el-form-item><el-form-item label="超时 (秒)"><el-input-number v-model="item.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="最大重试次数"><el-input-number v-model="item.max_retries" :min="0" :max="10" /></el-form-item><el-form-item label="启用"><el-switch v-model="item.enabled" /></el-form-item><el-button type="primary" @click="saveProvider(item)">保存</el-button><el-button :loading="providerTesting === item.id" @click="runProviderTest(item)">测试模型配置</el-button><el-button @click="remove(item, 'provider')">删除</el-button><el-alert v-if="item.id && providerTestResults[item.id]" class="provider-test-result" :type="providerTestResults[item.id].success ? 'success' : 'error'" :closable="false" :title="providerTestResults[item.id].message" :description="providerTestDescription(providerTestResults[item.id])" /></el-form></el-card>
+        <el-divider content-position="left">Vision Provider</el-divider><el-button class="add-button" @click="addProvider('vision')">新增 Vision Provider</el-button><el-card v-for="item in visionProviders" :key="item.id ?? item.name" class="config-card"><el-form label-width="150px"><el-form-item label="名称"><el-input v-model="item.name" /></el-form-item><el-form-item label="Base URL"><el-input v-model="item.base_url" /></el-form-item><el-form-item label="模型"><el-input v-model="item.model_name" /></el-form-item><el-form-item label="API Key"><el-input v-model="item.api_key" show-password :placeholder="item.savedKeyMask ? `已保存：${item.savedKeyMask}；留空不覆盖` : '请输入 API Key'" /></el-form-item><el-form-item label="超时 (秒)"><el-input-number v-model="item.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="最大重试次数"><el-input-number v-model="item.max_retries" :min="0" :max="10" /></el-form-item><el-form-item label="启用"><el-switch v-model="item.enabled" /></el-form-item><el-button type="primary" @click="saveProvider(item)">保存</el-button><el-button :loading="providerTesting === item.id" @click="runProviderTest(item)">测试模型配置</el-button><el-button @click="remove(item, 'provider')">删除</el-button><el-alert v-if="item.id && providerTestResults[item.id]" class="provider-test-result" :type="providerTestResults[item.id].success ? 'success' : 'error'" :closable="false" :title="providerTestResults[item.id].message" :description="providerTestDescription(providerTestResults[item.id])" /></el-form></el-card>
       </el-tab-pane>
       <el-tab-pane label="Prompt 模板"><el-alert type="info" :closable="false" title="所有 Prompt 模板集中维护；每类仅会读取已启用的模板。" /><el-collapse class="form-top"><el-collapse-item v-for="group in promptGroups" :key="group.purpose" :name="group.purpose" :title="group.label"><p class="muted">{{ group.hint }}</p><el-button class="add-button" @click="addTemplate(group.purpose)">新增 {{ group.label }} 模板</el-button><el-card v-for="item in group.templates" :key="item.id ?? item.name" class="config-card"><el-form label-width="150px"><el-form-item label="名称"><el-input v-model="item.name" /></el-form-item><el-form-item label="模板"><el-input v-model="item.template" type="textarea" :rows="7" /></el-form-item><el-form-item label="启用"><el-switch v-model="item.enabled" /></el-form-item><el-button type="primary" @click="saveTemplate(item)">保存</el-button><el-button @click="remove(item, 'template')">删除</el-button></el-form></el-card></el-collapse-item></el-collapse></el-tab-pane>
     </el-tabs>
@@ -195,6 +218,9 @@ onMounted(load)
 .form-top { margin-top: 20px; }
 .form-help { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; margin-top: 6px; }
 .browser-help { margin: 0 0 18px 0; }
+.browser-connection-test { margin: 0 0 18px 170px; }
+.browser-connection-result { margin-top: 10px; max-width: 680px; }
+.provider-test-result { margin-top: 14px; }
 .platform-actions { display: flex; gap: 12px; margin-top: 16px; }
 .test-result { margin-top: 16px; }
 </style>

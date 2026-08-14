@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getResearchTask, getTaskAnalysis, getTaskConcepts, getTaskPrompts, getTaskRankings, getTaskReport, getTaskTrends, listTaskContents, runResearchTask } from '@/api/research'
+import { downloadTaskReport, getResearchTask, getTaskAnalysis, getTaskConcepts, getTaskPrompts, getTaskRankings, getTaskReport, getTaskTrends, listTaskContents, runResearchTask } from '@/api/research'
+import type { ReportDownloadFormat } from '@/api/research'
 import type { ContentAnalysis, ContentItem, CreativeConcept, ImagePrompt, RankingItem, ResearchTask, TaskRankings, TaskReport, TrendAnalysis, VisualAnalysis } from '@/types'
 
 const route = useRoute()
@@ -25,6 +26,7 @@ const trendLoading = ref(false)
 const conceptLoading = ref(false)
 const promptLoading = ref(false)
 const reportLoading = ref(false)
+const reportDownloading = ref<ReportDownloadFormat | null>(null)
 const rankingError = ref('')
 const analysisError = ref('')
 const trendError = ref('')
@@ -69,8 +71,12 @@ function contentFor(item: ContentAnalysis | RankingItem): ContentItem | undefine
     media_type: null, image_urls: [], local_image_paths: localPaths, video_urls: [], query_keyword: null, collected_at: '', raw_data: null
   }
 }
-function thumbnail(item?: ContentItem): string | undefined { return item?.local_image_paths[0] || item?.image_urls[0] }
-function previewImages(item?: ContentItem): string[] { return item?.local_image_paths.length ? item.local_image_paths : item?.image_urls ?? [] }
+function localMediaUrl(item: ContentItem, path: string): string | undefined {
+  const filename = path.split(/[\\/]/).pop()
+  return filename ? `/api/v1/research/tasks/${taskId}/contents/${item.id}/media/${encodeURIComponent(filename)}` : undefined
+}
+function thumbnail(item?: ContentItem): string | undefined { return item?.local_image_paths[0] ? localMediaUrl(item, item.local_image_paths[0]) : item?.image_urls[0] }
+function previewImages(item?: ContentItem): string[] { return item?.local_image_paths.length ? item.local_image_paths.map((path) => localMediaUrl(item, path)).filter((path): path is string => Boolean(path)) : item?.image_urls ?? [] }
 function displayNumber(value: number | null | undefined): string { return value == null ? '—' : new Intl.NumberFormat().format(value) }
 function displayScore(value: unknown): string { return typeof value === 'number' ? value.toFixed(2) : '—' }
 function arrayValue(value: unknown): string[] { return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [] }
@@ -150,6 +156,20 @@ async function copyPrompt(value: string | null | undefined): Promise<void> {
     ElMessage.success('Prompt 已复制')
   } catch { ElMessage.error('复制失败，请手动复制。') }
 }
+async function downloadReport(fileFormat: ReportDownloadFormat): Promise<void> {
+  reportDownloading.value = fileFormat
+  try {
+    const blob = await downloadTaskReport(taskId, fileFormat)
+    const extension = fileFormat === 'json' ? 'json' : 'md'
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `research-task-${taskId}-${fileFormat}.${extension}`
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('报告已开始下载')
+  } finally { reportDownloading.value = null }
+}
 async function startResearch(): Promise<void> {
   running.value = true
   try {
@@ -198,7 +218,7 @@ onMounted(load)
         <el-tab-pane label="趋势" name="trends"><div v-loading="trendLoading"><el-alert v-if="trendError" type="error" :closable="false" :title="trendError" /><el-empty v-else-if="!trendLoading && !trends" description="暂无趋势分析结果。" /><template v-else-if="trends"><el-alert v-if="trends.insufficient_data" type="warning" :closable="false" title="数据量不足，趋势仅供参考" :description="arrayValue(trends.limitations).join('；') || trends.limitation || '请采集更多公开内容后重新执行分析。'" /><el-descriptions class="trend-grid" :column="2" border><el-descriptions-item label="热门话题">{{ arrayValue(trends.hot_topics).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="上升话题">{{ arrayValue(trends.rising_topics).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="视觉模式">{{ arrayValue(trends.visual_patterns).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="文案模式">{{ arrayValue(trends.copywriting_patterns).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="受众模式">{{ arrayValue(trends.audience_patterns).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="场景模式">{{ arrayValue(trends.scenario_patterns).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="风格模式">{{ arrayValue(trends.style_patterns).join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="领域模式">{{ arrayValue(trends.domain_patterns).join('、') || '—' }}</el-descriptions-item></el-descriptions></template></div></el-tab-pane>
         <el-tab-pane label="Creative Concepts" name="concepts"><div v-loading="conceptLoading"><el-alert v-if="conceptError" type="error" :closable="false" :title="conceptError" /><el-empty v-else-if="!conceptLoading && concepts.length === 0" description="暂无创作方向；完成趋势分析和 Concept 生成后显示。" /><el-row v-else :gutter="16"><el-col v-for="(concept, index) in concepts" :key="concept.id ?? `${concept.name}-${index}`" :xs="24" :lg="12"><el-card class="concept-card" shadow="never"><template #header><div class="card-header"><strong>{{ concept.name }}</strong><el-tag effect="plain">{{ concept.style || '通用风格' }}</el-tag></div></template><p>{{ concept.concept || '暂无方向说明。' }}</p><el-descriptions :column="1" size="small" border><el-descriptions-item label="目标受众">{{ concept.target_audience.join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="应用场景">{{ concept.scenario.join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="核心元素">{{ concept.main_elements.join('、') || '—' }}</el-descriptions-item><el-descriptions-item label="差异化">{{ concept.differentiation || '—' }}</el-descriptions-item></el-descriptions><div class="trend-basis"><strong>Trend Basis</strong><p>{{ concept.trend_basis.join('；') || '暂无可追溯趋势依据。' }}</p></div></el-card></el-col></el-row></div></el-tab-pane>
         <el-tab-pane label="图片 Prompt" name="prompts"><div v-loading="promptLoading"><el-alert v-if="promptError" type="error" :closable="false" :title="promptError" /><el-empty v-else-if="!promptLoading && prompts.length === 0" description="暂无图片 Prompt；完成 Concept 与 Prompt 生成后显示。" /><template v-else-if="selectedPromptItem"><el-radio-group v-model="selectedPrompt" class="concept-switcher"><el-radio-button v-for="(item, index) in prompts" :key="item.id ?? index" :value="item.id ?? index">{{ promptLabel(item, index) }}</el-radio-button></el-radio-group><el-card class="prompt-card" shadow="never"><template #header><div class="card-header"><strong>{{ promptLabel(selectedPromptItem, prompts.indexOf(selectedPromptItem)) }}</strong><el-tag type="info">仅输出 Prompt，不生成图片</el-tag></div></template><div class="trend-basis"><strong>Trend Basis</strong><p>{{ selectedPromptItem.trend_basis.join('；') || '暂无可追溯趋势依据。' }}</p></div><el-row :gutter="16"><el-col v-for="section in [{ key: 'hero_prompt', label: 'Hero' }, { key: 'detail_prompt', label: 'Detail' }, { key: 'lifestyle_prompt', label: 'Lifestyle' }, { key: 'cover_prompt', label: 'Cover' }, { key: 'negative_prompt', label: 'Negative' }]" :key="section.key" :xs="24" :md="12"><section class="prompt-section"><div class="card-header"><strong>{{ section.label }} Prompt</strong><el-button text type="primary" @click="copyPrompt(promptField(selectedPromptItem, section.key))">复制</el-button></div><pre>{{ promptText(promptField(selectedPromptItem, section.key)) }}</pre></section></el-col></el-row></el-card></template></div></el-tab-pane>
-        <el-tab-pane label="研究报告" name="report"><div v-loading="reportLoading"><el-alert v-if="reportError" type="error" :closable="false" :title="reportError" /><el-empty v-else-if="!reportLoading && !report" description="暂无研究报告；任务完成后将生成 Markdown 报告。" /><template v-else-if="report"><el-card shadow="never" class="report-card"><template #header>研究摘要</template><p>{{ report.summary || '报告未提供独立摘要，请查看下方 Markdown 内容。' }}</p></el-card><el-card shadow="never" class="report-card"><template #header>Markdown 报告</template><pre class="markdown-report">{{ report.markdown || '暂无 Markdown 报告内容。' }}</pre></el-card><el-alert type="warning" :closable="false" title="数据限制" :description="report.limitations.join('；') || '报告未返回额外数据限制。'" /></template></div></el-tab-pane>
+        <el-tab-pane label="研究报告" name="report"><div v-loading="reportLoading"><el-alert v-if="reportError" type="error" :closable="false" :title="reportError" /><el-empty v-else-if="!reportLoading && !report" description="暂无研究报告；任务完成后将生成 Markdown 报告。" /><template v-else-if="report"><el-card shadow="never" class="report-card"><template #header>研究摘要</template><p>{{ report.summary || '报告未提供独立摘要，请查看下方 Markdown 内容。' }}</p></el-card><el-card shadow="never" class="report-card"><template #header><div class="card-header"><strong>Markdown 报告</strong><div><el-button text type="primary" :loading="reportDownloading === 'markdown'" @click="downloadReport('markdown')">下载 Markdown</el-button><el-button text type="primary" :loading="reportDownloading === 'json'" @click="downloadReport('json')">下载 JSON</el-button><el-button text type="primary" :loading="reportDownloading === 'prompts'" @click="downloadReport('prompts')">下载 Prompts</el-button></div></div></template><pre class="markdown-report">{{ report.markdown || '暂无 Markdown 报告内容。' }}</pre></el-card><el-alert type="warning" :closable="false" title="数据限制" :description="report.limitations.join('；') || '报告未返回额外数据限制。'" /></template></div></el-tab-pane>
       </el-tabs>
     </template>
   </section>

@@ -34,6 +34,11 @@ class PlatformConfigurationTestService:
             if results and results[0].get("url"):
                 await adapter.open_content(str(results[0]["url"]))
                 detail_result = self._display_content(await adapter.extract_content())
+            if not results:
+                return PlatformConfigTestRead(
+                    success=False,
+                    message="Configuration test found no matching search cards. Check the selector, login state, or increase result_wait_ms in advanced parser rules.",
+                )
             return PlatformConfigTestRead(success=True, search_result_count=len(results), first_result=first_result, detail_result=detail_result, message="Configuration test completed using publicly visible page content.")
         except PublicAccessBlockedError as error:
             return PlatformConfigTestRead(success=False, message=str(error))

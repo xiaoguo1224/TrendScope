@@ -134,3 +134,8 @@ export const getTaskReport = async (id: number): Promise<TaskReport> => {
     limitations: strings(source.limitations ?? source.data_limitations)
   }
 }
+
+export type ReportDownloadFormat = 'markdown' | 'json' | 'prompts'
+export const downloadTaskReport = async (id: number, fileFormat: ReportDownloadFormat): Promise<Blob> => (
+  await client.get(`/research/tasks/${id}/report/download`, { params: { file_format: fileFormat }, responseType: 'blob' })
+).data as Blob

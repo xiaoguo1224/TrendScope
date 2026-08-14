@@ -58,8 +58,10 @@ async def test_report_exports_are_persistent_and_text_only(client, tmp_path: Pat
 def test_reporting_apis_return_persisted_outputs_and_honor_sqlite_defaults(client, tmp_path: Path, monkeypatch) -> None:
     from app.core.database import get_db
     import app.services.reporting as reporting_module
+    import app.api.research_tasks as research_tasks_module
 
     monkeypatch.setattr(reporting_module, "get_settings", lambda: SimpleNamespace(reports_dir=tmp_path / "reports"))
+    monkeypatch.setattr(research_tasks_module, "get_settings", lambda: SimpleNamespace(data_dir=tmp_path / "data"))
     session: Session = next(client.app.dependency_overrides[get_db]())
     task = _task_with_evidence(session)
     setting = client.put("/api/v1/config/settings/report_defaults", json={
@@ -78,6 +80,20 @@ def test_reporting_apis_return_persisted_outputs_and_honor_sqlite_defaults(clien
     assert prompts.json()[0]["trend_basis"]
     assert report.json()["content"]["data_limitations"]
     assert (tmp_path / "reports" / str(task.id) / "report.json").is_file()
+    markdown_download = client.get(f"/api/v1/research/tasks/{task.id}/report/download?file_format=markdown")
+    json_download = client.get(f"/api/v1/research/tasks/{task.id}/report/download?file_format=json")
+    prompts_download = client.get(f"/api/v1/research/tasks/{task.id}/report/download?file_format=prompts")
+    assert markdown_download.status_code == json_download.status_code == prompts_download.status_code == 200
+    assert markdown_download.headers["content-disposition"].endswith(f'"research-task-{task.id}-report.md"')
+    assert json_download.json()["research_task"]["topic"] == "portable coffee"
+    first_item = session.query(ContentItem).filter_by(research_task_id=task.id).first()
+    assert first_item is not None
+    media_path = tmp_path / "data" / "tasks" / str(task.id) / "media" / str(first_item.id) / "image-1.jpg"
+    media_path.parent.mkdir(parents=True)
+    media_path.write_bytes(b"public-image")
+    media = client.get(f"/api/v1/research/tasks/{task.id}/contents/{first_item.id}/media/image-1.jpg")
+    assert media.status_code == 200
+    assert media.content == b"public-image"
 
 
 def test_prompt_composition_uses_templates_and_visual_domain_evidence(client, tmp_path: Path) -> None:

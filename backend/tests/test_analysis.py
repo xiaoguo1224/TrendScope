@@ -11,6 +11,7 @@ from app.models.content import ContentItem, ContentMetricSnapshot
 from app.models.research_task import ResearchTask
 from app.schemas.analysis import TextAnalysis, VisualAnalysis
 from app.providers.vision import MockVisionProvider
+from app.providers.openai_compatible import _headers_for, _payload_for, _response_text, OpenAICompatibleProvider, _routes_to_try
 from app.services.analysis import AnalysisService
 from app.services.ranking import RankingService
 
@@ -84,6 +85,42 @@ async def test_mock_vision_analyzes_a_local_image_path(tmp_path) -> None:
 
 
 @pytest.mark.anyio
+async def test_enabled_openai_compatible_provider_returns_structured_json() -> None:
+    config = AIProviderConfig(name="compatible", provider_type="llm", base_url="https://provider.example", model_name="model", api_key="test-key", enabled=True)
+    provider = OpenAICompatibleProvider(config)
+    provider._post = lambda endpoint, payload, headers: {"choices": [{"message": {"content": '{"hook_type":"informational"}'}}]}  # type: ignore[method-assign]
+
+    response = await provider.generate_structured(prompt="Return analysis", context={})
+
+    assert response == {"hook_type": "informational"}
+    assert provider.base_url == "https://provider.example"
+    assert _routes_to_try("https://provider.example", "gpt-5.6-terra")[0] == "openai_responses"
+
+
+def test_provider_url_routes_cover_supported_vendor_formats() -> None:
+    assert _routes_to_try("https://api.anthropic.com/v1/messages", "claude-sonnet") == ["anthropic_messages"]
+    assert _routes_to_try("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", "gemini-2.5-flash") == ["gemini"]
+    assert _routes_to_try("http://127.0.0.1:11434/api/chat", "qwen3-vl") == ["ollama_chat"]
+
+
+@pytest.mark.parametrize(
+    ("route", "response"),
+    [
+        ("anthropic_messages", {"content": [{"type": "text", "text": '{"ok":true}'}]}),
+        ("gemini", {"candidates": [{"content": {"parts": [{"text": '{"ok":true}'}]}}]}),
+        ("ollama_generate", {"response": '{"ok":true}'}),
+        ("ollama_chat", {"message": {"content": '{"ok":true}'}}),
+    ],
+)
+def test_vendor_payloads_and_response_parsing(route, response) -> None:
+    payload = _payload_for(route, "test-model", "system", "user", "aW1hZ2U=", "image/png")
+
+    assert _response_text(response, route) == '{"ok":true}'
+    assert payload
+    assert _headers_for(route, "secret")["Content-Type"] == "application/json"
+
+
+@pytest.mark.anyio
 async def test_per_content_analysis_failure_is_isolated(client) -> None:
     from app.core.database import get_db
     session: Session = next(client.app.dependency_overrides[get_db]())
@@ -115,3 +152,12 @@ def test_analysis_endpoints_and_database_provider_selection(client) -> None:
     trend = client.get(f"/api/v1/research/tasks/{task.id}/trends")
     assert trend.status_code == 200
     assert trend.json()["insufficient_data"] is True
+
+
+def test_complete_provider_configuration_selects_the_real_adapter(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    session.add(AIProviderConfig(name="compatible", provider_type="llm", base_url="https://provider.example/v1", model_name="model", api_key="test-key", enabled=True))
+    session.commit()
+
+    assert isinstance(AnalysisService(session).llm_provider, OpenAICompatibleProvider)

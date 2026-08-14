@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.repositories.configuration import AppSettingRepository, configuration_repositories
 from app.schemas.configuration import (
-    AIProviderConfigCreate, AIProviderConfigRead, AppSettingRead, AppSettingUpsert,
-    PlatformConfigCreate, PlatformConfigRead, PlatformConfigTestRead, PlatformConfigTestRequest, PromptTemplateCreate, PromptTemplateRead,
+    AIProviderConfigCreate, AIProviderConfigRead, AIProviderConfigTestRead, AppSettingRead, AppSettingUpsert,
+    BrowserConnectionTestRead, PlatformConfigCreate, PlatformConfigRead, PlatformConfigTestRead, PlatformConfigTestRequest, PromptTemplateCreate, PromptTemplateRead,
     RankingConfigCreate, RankingConfigRead,
 )
 
@@ -57,6 +57,7 @@ DEFAULT_XIAOHONGSHU_PLATFORM = {
         "comment_count": {"source": "comment_count", "type": "compact_number", "optional": True},
         "images": {"source": "image", "type": "src_list", "deduplicate": True},
         "text": {"source": "content", "type": "text", "trim": True, "optional": True},
+        "result_wait_ms": 2500,
         "access_block_indicators": ["captcha", "verify you are human", "access denied", "登录后", "请登录"],
     },
     "enabled": True,
@@ -157,6 +158,10 @@ def ensure_collection_defaults(database: Session) -> None:
     for platform in (DEFAULT_GENERIC_WEB_PLATFORM, DEFAULT_XIAOHONGSHU_PLATFORM):
         if str(platform["name"]) not in existing_platforms:
             platforms.create(platform)
+    xiaohongshu = next((item for item in platforms.list() if item.name == "xiaohongshu"), None)
+    if xiaohongshu is not None and "result_wait_ms" not in xiaohongshu.parser_rules:
+        xiaohongshu.parser_rules = {**xiaohongshu.parser_rules, "result_wait_ms": 2500}
+        database.commit()
 
 
 def ensure_analysis_defaults(database: Session) -> None:
@@ -270,6 +275,23 @@ async def test_platform_configuration(
     if platform is None:
         raise _not_found()
     return await PlatformConfigurationTestService(database).run(platform, query=payload.query, limit=payload.limit)
+
+
+@router.post("/ai-providers/{item_id}/test", response_model=AIProviderConfigTestRead)
+async def test_ai_provider_configuration(item_id: int, database: Session = Depends(get_db)) -> AIProviderConfigTestRead:
+    from app.services.provider_configuration_test import ProviderConfigurationTestService
+
+    provider = configuration_repositories(database)["ai-providers"].get(item_id)
+    if provider is None:
+        raise _not_found()
+    return await ProviderConfigurationTestService().run(provider)
+
+
+@router.post("/browser/test-connection", response_model=BrowserConnectionTestRead)
+async def test_system_browser_connection(database: Session = Depends(get_db)) -> BrowserConnectionTestRead:
+    from app.services.browser_connection_test import BrowserConnectionTestService
+
+    return await BrowserConnectionTestService(database).run()
 
 
 @router.post("/ranking-configs/reset-default", response_model=RankingConfigRead)

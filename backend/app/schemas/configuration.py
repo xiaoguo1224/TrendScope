@@ -45,6 +45,11 @@ class PlatformConfigTestRead(BaseModel):
     message: str | None = None
 
 
+class BrowserConnectionTestRead(BaseModel):
+    success: bool
+    message: str
+
+
 class AIProviderConfigCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     provider_type: str = Field(min_length=1, max_length=30)
@@ -67,6 +72,13 @@ class AIProviderConfigRead(AIProviderConfigCreate):
         if not value:
             return None
         return "*" * max(0, len(value) - 4) + value[-4:]
+
+
+class AIProviderConfigTestRead(BaseModel):
+    success: bool
+    endpoint: str
+    response_preview: str | None = None
+    message: str
 
 
 class PromptTemplateCreate(BaseModel):

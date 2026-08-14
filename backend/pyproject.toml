@@ -9,6 +9,7 @@ dependencies = [
   "pydantic-settings>=2.6,<3",
   "playwright>=1.49,<2",
   "sqlalchemy>=2.0,<3",
+  "tzdata>=2025,<2027",
   "uvicorn[standard]>=0.32,<1",
 ]
 

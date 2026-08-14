@@ -11,7 +11,7 @@ from app.models.content import ContentItem, ContentMetricSnapshot
 from app.models.research_task import ResearchTask
 from app.schemas.analysis import TextAnalysis, VisualAnalysis
 from app.providers.vision import MockVisionProvider
-from app.providers.openai_compatible import _headers_for, _payload_for, _response_text, OpenAICompatibleProvider, _routes_to_try
+from app.providers.openai_compatible import _endpoint_for, _headers_for, _payload_for, _response_text, _sse_response, OpenAICompatibleProvider, _routes_to_try
 from app.services.analysis import AnalysisService
 from app.services.ranking import RankingService
 
@@ -101,6 +101,8 @@ def test_provider_url_routes_cover_supported_vendor_formats() -> None:
     assert _routes_to_try("https://api.anthropic.com/v1/messages", "claude-sonnet") == ["anthropic_messages"]
     assert _routes_to_try("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", "gemini-2.5-flash") == ["gemini"]
     assert _routes_to_try("http://127.0.0.1:11434/api/chat", "qwen3-vl") == ["ollama_chat"]
+    assert _routes_to_try("https://router.example", "gpt-5.6-terra") == ["openai_responses", "openai_chat", "anthropic_messages"]
+    assert _endpoint_for("https://router.example", "anthropic_messages") == "https://router.example/v1/messages"
 
 
 @pytest.mark.parametrize(
@@ -118,6 +120,59 @@ def test_vendor_payloads_and_response_parsing(route, response) -> None:
     assert _response_text(response, route) == '{"ok":true}'
     assert payload
     assert _headers_for(route, "secret")["Content-Type"] == "application/json"
+
+
+def test_responses_route_accepts_a_chat_completion_envelope_from_a_gateway() -> None:
+    assert _response_text({"choices": [{"message": {"content": '{"ok":true}'}}]}, "openai_responses") == '{"ok":true}'
+
+
+def test_responses_failure_reports_the_provider_reason() -> None:
+    with pytest.raises(RuntimeError, match="vision input is unsupported"):
+        _response_text({"status": "failed", "error": {"message": "vision input is unsupported"}}, "openai_responses")
+    payload = _payload_for("openai_responses", "model", "system", "user", None, None)
+    assert payload["max_output_tokens"] == 2048
+
+
+def test_responses_vision_payload_uses_top_level_instructions_and_image_detail() -> None:
+    payload = _payload_for("openai_responses", "model", "system", "user", "aW1hZ2U=", "image/png")
+    assert payload["instructions"] == "system"
+    image = payload["input"][0]["content"][1]
+    assert image["type"] == "input_image"
+    assert image["detail"] == "auto"
+    assert payload["stream"] is True
+
+
+def test_responses_sse_deltas_are_assembled_into_output_text() -> None:
+    raw = 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"{\\"ok"}\n\nevent: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"\\":true}"}\n'
+    assert _sse_response(raw) == {"output_text": '{"ok":true}'}
+
+
+def test_completed_response_with_empty_output_allows_route_fallback() -> None:
+    with pytest.raises(RuntimeError, match="API route did not produce"):
+        _response_text({"status": "completed", "output": []}, "openai_responses")
+
+
+@pytest.mark.anyio
+async def test_plain_base_url_falls_back_to_messages_for_empty_vision_response() -> None:
+    config = AIProviderConfig(name="router", provider_type="vision", base_url="https://router.example", model_name="gpt-5.6-terra", api_key="test-key", max_retries=0, enabled=True)
+    provider = OpenAICompatibleProvider(config)
+    calls: list[str] = []
+
+    def post(endpoint, payload, headers):
+        calls.append(endpoint)
+        if endpoint.endswith("/responses"):
+            return {"status": "completed", "output": []}
+        if endpoint.endswith("/chat/completions"):
+            raise RuntimeError("HTTP 400: protocol_not_supported")
+        return {"content": [{"type": "text", "text": '{"ok":true}'}]}
+
+    provider._post = post  # type: ignore[method-assign]
+    assert await provider.analyze_image_bytes(image_bytes=b"image", mime_type="image/png", prompt="test", context={}) == {"ok": True}
+    assert calls == [
+        "https://router.example/v1/responses",
+        "https://router.example/v1/chat/completions",
+        "https://router.example/v1/messages",
+    ]
 
 
 @pytest.mark.anyio

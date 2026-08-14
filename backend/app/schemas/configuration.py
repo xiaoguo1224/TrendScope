@@ -77,6 +77,7 @@ class AIProviderConfigRead(AIProviderConfigCreate):
 class AIProviderConfigTestRead(BaseModel):
     success: bool
     endpoint: str
+    request_preview: str | None = None
     response_preview: str | None = None
     message: str
 

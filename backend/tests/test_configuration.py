@@ -60,6 +60,7 @@ def test_system_browser_connection_test_uses_a_temporary_blank_tab(client: TestC
 async def test_ai_provider_configuration_test_uses_synthetic_input() -> None:
     class FakeProvider:
         last_endpoint = "https://provider.example/v1/responses"
+        last_request_preview = '{"route":"openai_responses"}'
 
         async def generate_structured(self, *, prompt, context):
             assert "llm" in prompt
@@ -75,6 +76,7 @@ async def test_ai_provider_configuration_test_uses_synthetic_input() -> None:
 
     assert result.success is True
     assert result.endpoint == "https://provider.example/v1/responses"
+    assert result.request_preview == '{"route":"openai_responses"}'
     assert result.response_preview == '{"ok": true}'
 
 

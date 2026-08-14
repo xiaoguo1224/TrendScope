@@ -112,7 +112,7 @@ uv run alembic revision --autogenerate -m "describe change"
 
 系统提供可配置的 `generic-web` 采集适配器：它从 SQLite 中读取搜索 URL、搜索/详情 Selector 和解析规则，通过隔离 Playwright 或本机系统浏览器 CDP 连接，仅处理正常浏览可见的公开 HTTP(S) 页面。默认会写入 `generic-web` 与可编辑的小红书示例配置；常用 Selector 可在表单中直接填写，复杂规则可在“高级配置”中维护。保存后可使用“测试配置”执行一次受限公开页面测试，查看搜索卡片数、第一条内容和详情解析结果。平台配置、Browser 参数、可选请求 Header（例如 Cookie 或 Authorization，留空即不发送）、下载图片开关、LLM Provider 基础配置及 Query Expansion Prompt 都可在“系统配置”页面维护。
 
-启用的 LLM / Vision Provider 按 Base URL 的路径自动选择适配器，无需选择“调用协议”。支持 OpenAI 兼容服务（填写 `/v1`、`/responses`、`/chat` 或 `/chat/completions`；`/chat` 自动补为 `/chat/completions`）、Anthropic Messages（`/v1/messages`）、Gemini Generate Content（模型 URL 以 `:generateContent` 结尾）和 Ollama（`/api/chat` 或 `/api/generate`）。对于仅填写 OpenAI 兼容基础地址的服务，GPT-5 / o 系列会优先使用 Responses API，其他模型优先使用 Chat Completions；必要时只会在网关明确报告协议不支持时回退。SQLite 中的历史 UTC 时间在 API 输出和页面展示时统一转换为东八区（`Asia/Shanghai`）。
+启用的 LLM / Vision Provider 按 Base URL 的路径自动选择适配器，无需选择“调用协议”。支持 OpenAI 兼容服务（填写 `/v1`、`/responses`、`/chat` 或 `/chat/completions`；`/chat` 自动补为 `/chat/completions`）、Anthropic Messages（`/v1/messages`）、Gemini Generate Content（模型 URL 以 `:generateContent` 结尾）和 Ollama（`/api/chat` 或 `/api/generate`）。对于只填写基础 URL 的路由网关，系统会依次协商 Responses、Chat Completions 和 Messages；只有前一路径明确不支持或返回空结果时才继续尝试下一路径。SQLite 中的历史 UTC 时间在 API 输出和页面展示时统一转换为东八区（`Asia/Shanghai`）。
 
 每个 Provider 保存后均可点击“测试模型配置”。LLM 使用最小 JSON 请求验证连接；Vision 使用内置的透明 1×1 PNG 验证视觉输入能力，不会上传采集到的平台图片。测试结果会显示实际调用地址及安全截断的响应摘要。
 

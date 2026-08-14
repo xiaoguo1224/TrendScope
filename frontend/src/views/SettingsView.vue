@@ -83,7 +83,7 @@ function parseHeaders(value: string): Record<string, string> {
   return headers
 }
 function imageCount(value: unknown): string { return Array.isArray(value) ? `${value.length} 张` : '—' }
-function providerTestDescription(result: AIProviderConfigTestResult): string { return `调用地址：${result.endpoint}${result.response_preview ? `；响应：${result.response_preview}` : ''}` }
+function providerTestDescription(result: AIProviderConfigTestResult): string { return `调用地址：${result.endpoint}${result.request_preview ? `；测试输入：${result.request_preview}` : ''}${result.response_preview ? `；模型输出：${result.response_preview}` : ''}` }
 
 async function load(): Promise<void> {
   loading.value = true

@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 import re
 from typing import Callable
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -147,7 +148,7 @@ class ContentCollectionService:
 
     def _browser_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "browser_defaults"))
-        return setting.value if setting and isinstance(setting.value, dict) else {"headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}
+        return setting.value if setting and isinstance(setting.value, dict) else {"mode": "isolated", "headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}
 
     def _collection_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "collection_defaults"))
@@ -155,11 +156,34 @@ class ContentCollectionService:
 
     @staticmethod
     def _create_browser(settings: dict[str, object]) -> BrowserAdapter:
+        browser_mode = str(settings.get("mode", "isolated"))
+        cdp_endpoint = settings.get("cdp_endpoint") if browser_mode == "system_cdp" else None
+        if browser_mode not in {"isolated", "system_cdp"}:
+            raise ValueError("Browser mode must be 'isolated' or 'system_cdp'")
+        if browser_mode == "system_cdp":
+            cdp_endpoint = ContentCollectionService._cdp_endpoint(cdp_endpoint)
         return PlaywrightBrowserAdapter(
             headless=bool(settings.get("headless", True)),
             timeout_ms=int(settings.get("timeout_seconds", 30)) * 1000,
             headers=ContentCollectionService._browser_headers(settings.get("headers")),
+            cdp_endpoint=cdp_endpoint,
         )
+
+    @staticmethod
+    def _cdp_endpoint(value: object) -> str:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("A local CDP endpoint is required when using the system browser")
+        endpoint = value.strip()
+        parsed = urlparse(endpoint)
+        try:
+            port = parsed.port
+        except ValueError as error:
+            raise ValueError("The system browser CDP endpoint must include a valid local port") from error
+        if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("The system browser CDP endpoint must use localhost")
+        if parsed.username or parsed.password or not port:
+            raise ValueError("The system browser CDP endpoint must include only a local host and port")
+        return endpoint
 
     @staticmethod
     def _browser_headers(value: object) -> dict[str, str]:

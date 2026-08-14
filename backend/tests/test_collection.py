@@ -30,6 +30,13 @@ def test_collection_passes_configured_headers_to_browser() -> None:
     assert browser.headers == {"Cookie": "session=example", "Authorization": "Bearer example"}
 
 
+def test_collection_can_connect_to_a_local_system_browser_only() -> None:
+    browser = ContentCollectionService._create_browser({"mode": "system_cdp", "cdp_endpoint": "http://127.0.0.1:9222", "timeout_seconds": 15})
+    assert browser.cdp_endpoint == "http://127.0.0.1:9222"
+    with pytest.raises(ValueError, match="localhost"):
+        ContentCollectionService._create_browser({"mode": "system_cdp", "cdp_endpoint": "http://192.0.2.1:9222"})
+
+
 @pytest.mark.anyio
 async def test_platform_configuration_test_uses_nested_selectors_and_returns_first_content(client) -> None:
     from app.core.database import get_db

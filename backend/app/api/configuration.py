@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/config", tags=["configuration"])
 
 DEFAULT_SETTINGS: dict[str, tuple[object, str]] = {
     "collection_defaults": ({"max_items": 50, "time_range": "7d", "request_interval_ms": 1200, "scroll_interval_ms": 1000}, "Default collection parameters"),
-    "browser_defaults": ({"headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}, "Default browser parameters"),
+    "browser_defaults": ({"mode": "isolated", "cdp_endpoint": "http://127.0.0.1:9222", "headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}, "Default browser parameters"),
     "report_defaults": ({"concept_count": 10, "prompt_language": "English", "prompt_style": "editorial lifestyle photography", "include_markdown": True}, "Creative concept, image prompt, and report defaults"),
 }
 DEFAULT_GENERIC_WEB_PLATFORM = {
@@ -90,6 +91,24 @@ def _validate_browser_headers(headers: object) -> None:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser header name is invalid")
         if not isinstance(value, str) or "\r" in value or "\n" in value:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser header value is invalid")
+
+
+def _validate_browser_connection(value: dict[str, object]) -> None:
+    mode = value.get("mode", "isolated")
+    if mode not in {"isolated", "system_cdp"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser mode must be isolated or system_cdp")
+    if mode != "system_cdp":
+        return
+    endpoint = value.get("cdp_endpoint")
+    if not isinstance(endpoint, str) or not endpoint.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="A local CDP endpoint is required when using the system browser")
+    parsed = urlparse(endpoint.strip())
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.username or parsed.password or not port:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="The system browser CDP endpoint must use localhost and an explicit port")
 
 
 def _mask_secret(value: str) -> str:
@@ -175,6 +194,7 @@ def update_setting(key: str, payload: AppSettingUpsert, database: Session = Depe
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser defaults must be a JSON object")
         value = _preserve_masked_browser_headers(database, dict(value))
         _validate_browser_headers(value.get("headers"))
+        _validate_browser_connection(value)
     saved = AppSettingRepository(database).upsert(key, {**payload.model_dump(), "value": value})
     return _setting_read(saved)
 

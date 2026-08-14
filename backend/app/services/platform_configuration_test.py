@@ -46,7 +46,7 @@ class PlatformConfigurationTestService:
 
     def _browser_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "browser_defaults"))
-        return setting.value if setting and isinstance(setting.value, dict) else {"headless": True, "timeout_seconds": 30, "headers": {}}
+        return setting.value if setting and isinstance(setting.value, dict) else {"mode": "isolated", "headless": True, "timeout_seconds": 30, "headers": {}}
 
     @staticmethod
     def _display_content(value: dict[str, Any]) -> dict[str, Any]:

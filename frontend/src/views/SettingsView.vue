@@ -11,7 +11,7 @@ type EditableProvider = AIProviderConfig & { savedKeyMask: string | null }
 const saving = ref(false)
 const loading = ref(true)
 const collection = reactive({ max_items: 50, time_range: '7d', request_interval_ms: 1200, scroll_interval_ms: 1000 })
-const browser = reactive({ headless: true, timeout_seconds: 30, download_images: true, headers: {} as Record<string, string> })
+const browser = reactive({ mode: 'isolated' as 'isolated' | 'system_cdp', cdp_endpoint: 'http://127.0.0.1:9222', headless: true, timeout_seconds: 30, download_images: true, headers: {} as Record<string, string> })
 const browserHeadersText = ref('')
 const reportDefaults = reactive({ concept_count: 12, prompt_language: 'English', prompt_style: 'editorial', include_markdown: true })
 const ranking = reactive<RankingConfig>({ name: 'default', enabled: true, like_weight: 1, favorite_weight: 1.2, comment_weight: 1.5, share_weight: 1.5, view_weight: 0.1, freshness_half_life_hours: 72, growth_window_hours: 24 })
@@ -155,7 +155,7 @@ onMounted(load)
       <el-tab-pane label="采集与浏览器">
         <el-form label-width="170px"><el-form-item label="默认最大采集数"><el-input-number v-model="collection.max_items" :min="1" :max="500" /></el-form-item><el-form-item label="默认时间范围"><el-select v-model="collection.time_range"><el-option value="24h" label="近 24 小时" /><el-option value="7d" label="近 7 天" /><el-option value="30d" label="近 30 天" /></el-select></el-form-item><el-form-item label="请求间隔 (ms)"><el-input-number v-model="collection.request_interval_ms" :min="0" /></el-form-item><el-form-item label="滚动/等待间隔 (ms)"><el-input-number v-model="collection.scroll_interval_ms" :min="0" /></el-form-item></el-form>
         <el-divider content-position="left">Browser</el-divider>
-        <el-form label-width="170px"><el-form-item label="无头模式"><el-switch v-model="browser.headless" /></el-form-item><el-form-item label="超时时间 (秒)"><el-input-number v-model="browser.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="下载公开图片"><el-switch v-model="browser.download_images" /></el-form-item><el-form-item label="请求 Header"><el-input v-model="browserHeadersText" type="textarea" :rows="5" placeholder="Cookie: session=value&#10;Authorization: Bearer token" /><div class="form-help">每行一个“名称: 值”，也可粘贴 JSON 对象；留空代表不发送任何自定义 Header。已保存的 Cookie/Token 会以掩码显示，不编辑可保留，删除该行后保存则清空。</div></el-form-item></el-form>
+        <el-form label-width="170px"><el-form-item label="浏览器模式"><el-radio-group v-model="browser.mode"><el-radio value="isolated">隔离 Playwright</el-radio><el-radio value="system_cdp">连接系统浏览器</el-radio></el-radio-group><div class="form-help">“连接系统浏览器”会复用专用 Chrome / Edge 配置目录中已登录的会话；不会读取或导出 Cookie。</div></el-form-item><el-form-item v-if="browser.mode === 'system_cdp'" label="本机 CDP 地址"><el-input v-model="browser.cdp_endpoint" placeholder="http://127.0.0.1:9222" /><div class="form-help">仅允许 localhost。请先按下方说明启动浏览器并完成手动登录；测试和研究任务都不会关闭该浏览器。</div></el-form-item><el-alert v-if="browser.mode === 'system_cdp'" class="browser-help" type="warning" :closable="false" title="首次登录：关闭 Chrome / Edge 后，用带 --remote-debugging-port 和独立 --user-data-dir 的命令启动；在新窗口手动登录目标平台，再保存并测试配置。" /><el-form-item label="无头模式" v-if="browser.mode === 'isolated'"><el-switch v-model="browser.headless" /></el-form-item><el-form-item label="超时时间 (秒)"><el-input-number v-model="browser.timeout_seconds" :min="1" :max="600" /></el-form-item><el-form-item label="下载公开图片"><el-switch v-model="browser.download_images" /></el-form-item><el-form-item label="请求 Header"><el-input v-model="browserHeadersText" type="textarea" :rows="5" placeholder="Cookie: session=value&#10;Authorization: Bearer token" /><div class="form-help">每行一个“名称: 值”，也可粘贴 JSON 对象；留空代表不发送任何自定义 Header。已保存的 Cookie/Token 会以掩码显示，不编辑可保留，删除该行后保存则清空。</div></el-form-item></el-form>
       </el-tab-pane>
       <el-tab-pane label="排名与报告">
         <el-alert type="info" :closable="false" title="Ranking 参数用于 Hot、Rising 与指标榜单；报告参数控制 Concept 与文本 Prompt 输出。" />
@@ -194,6 +194,7 @@ onMounted(load)
 .add-button { margin-top: 16px; }
 .form-top { margin-top: 20px; }
 .form-help { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; margin-top: 6px; }
+.browser-help { margin: 0 0 18px 0; }
 .platform-actions { display: flex; gap: 12px; margin-top: 16px; }
 .test-result { margin-top: 16px; }
 </style>

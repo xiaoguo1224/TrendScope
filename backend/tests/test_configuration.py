@@ -30,6 +30,13 @@ def test_browser_headers_are_persisted_and_reject_injection(client: TestClient) 
     assert invalid.status_code == 422
 
 
+def test_system_browser_configuration_requires_a_local_cdp_endpoint(client: TestClient) -> None:
+    remote = client.put("/api/v1/config/settings/browser_defaults", json={"value": {"mode": "system_cdp", "cdp_endpoint": "http://192.0.2.1:9222", "headers": {}}})
+    assert remote.status_code == 422
+    local = client.put("/api/v1/config/settings/browser_defaults", json={"value": {"mode": "system_cdp", "cdp_endpoint": "http://127.0.0.1:9222", "headers": {}}})
+    assert local.status_code == 200
+
+
 def test_ranking_config_crud(client: TestClient) -> None:
     payload = {"name": "research-default", "like_weight": 1.0, "favorite_weight": 1.2, "comment_weight": 1.5, "share_weight": 1.5, "view_weight": 0.1, "freshness_half_life_hours": 72, "growth_window_hours": 24}
     created = client.post("/api/v1/config/ranking-configs", json=payload)

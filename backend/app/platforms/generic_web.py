@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import asyncio
+import re
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote_plus, urlparse
@@ -44,8 +45,9 @@ class GenericWebPlatformAdapter:
             await self.browser.scroll(scroll_amount)
             if scroll_interval_ms > 0:
                 await asyncio.sleep(min(scroll_interval_ms, 10_000) / 1000)
-        item_selector = self.config.selectors.get("item")
-        field_selectors = {key.removeprefix("field_"): value for key, value in self.config.selectors.items() if key.startswith("field_")}
+        selectors = self._selector_group("search")
+        item_selector = selectors.pop("result_container", None) or self._string(self.config.selectors.get("item"))
+        field_selectors = selectors or {key.removeprefix("field_"): value for key, value in self.config.selectors.items() if key.startswith("field_") and isinstance(value, str)}
         extracted = await self.browser.extract_visible_content(item_selector, field_selectors)
         return [self._normalize(item, query) for item in extracted[:limit]]
 
@@ -53,9 +55,11 @@ class GenericWebPlatformAdapter:
         await self.browser.open(url)
 
     async def extract_content(self) -> dict[str, Any]:
-        if self._current_result is not None:
+        detail_selectors = self._selector_group("detail")
+        if self._current_result is not None and not detail_selectors:
             return self._current_result
-        items = await self.browser.extract_visible_content()
+        item_selector = detail_selectors.pop("result_container", None) if detail_selectors else None
+        items = await self.browser.extract_visible_content(item_selector, detail_selectors or None)
         return self._normalize(items[0], "") if items else {}
 
     async def download_media(self, content: dict[str, Any]) -> list[bytes]:
@@ -70,6 +74,29 @@ class GenericWebPlatformAdapter:
         for target, source_name in rules.get("field_map", {}).items():
             if isinstance(source_name, str) and source_name in source:
                 source[target] = source[source_name]
+        if "content_link" in source and not source.get("url"):
+            source["url"] = source["content_link"]
+        for target, rule in rules.items():
+            if not isinstance(rule, dict) or not isinstance(rule.get("source"), str):
+                continue
+            value = source.get(rule["source"])
+            if value is None:
+                continue
+            source[target] = self._parse_rule_value(value, rule)
+        if "content_id" in source and "external_id" not in source:
+            source["external_id"] = source["content_id"]
+        if "cover" in source and "cover_url" not in source:
+            source["cover_url"] = source["cover"]
+        if "cover_url" in source:
+            existing_images = source.get("image_urls")
+            image_values = existing_images if isinstance(existing_images, list) else [existing_images] if existing_images else []
+            source["image_urls"] = self._urls([source["cover_url"], *image_values])
+        if "images" in source:
+            source["image_urls"] = self._urls(source["images"])
+        aliases = {"author": "author_name", "publish_time": "published_at", "collect_count": "favorite_count"}
+        for origin, target in aliases.items():
+            if origin in source and target not in source:
+                source[target] = source[origin]
         url = self._string(source.get("url"))
         title = self._string(source.get("title"))
         text = self._string(source.get("text"))
@@ -124,3 +151,22 @@ class GenericWebPlatformAdapter:
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except ValueError:
             return None
+
+    def _selector_group(self, group: str) -> dict[str, str]:
+        configured = self.config.selectors.get(group)
+        if isinstance(configured, dict):
+            return {str(name): value for name, value in configured.items() if isinstance(value, str) and value.strip()}
+        return {}
+
+    @staticmethod
+    def _parse_rule_value(value: object, rule: dict[str, Any]) -> object:
+        value_type = str(rule.get("type") or "text")
+        if value_type == "src_list":
+            values = value if isinstance(value, list) else [value]
+            return list(dict.fromkeys(str(item) for item in values if item))
+        text = str(value).strip() if rule.get("trim", True) else str(value)
+        pattern = rule.get("pattern")
+        if isinstance(pattern, str):
+            matched = re.search(pattern, text)
+            return matched.group(1) if matched and matched.groups() else text
+        return text

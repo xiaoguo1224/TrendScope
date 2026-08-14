@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import re
 from typing import Callable
 
 from sqlalchemy import select
@@ -146,7 +147,7 @@ class ContentCollectionService:
 
     def _browser_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "browser_defaults"))
-        return setting.value if setting and isinstance(setting.value, dict) else {"headless": True, "timeout_seconds": 30, "download_images": True}
+        return setting.value if setting and isinstance(setting.value, dict) else {"headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}
 
     def _collection_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "collection_defaults"))
@@ -154,7 +155,26 @@ class ContentCollectionService:
 
     @staticmethod
     def _create_browser(settings: dict[str, object]) -> BrowserAdapter:
-        return PlaywrightBrowserAdapter(headless=bool(settings.get("headless", True)), timeout_ms=int(settings.get("timeout_seconds", 30)) * 1000)
+        return PlaywrightBrowserAdapter(
+            headless=bool(settings.get("headless", True)),
+            timeout_ms=int(settings.get("timeout_seconds", 30)) * 1000,
+            headers=ContentCollectionService._browser_headers(settings.get("headers")),
+        )
+
+    @staticmethod
+    def _browser_headers(value: object) -> dict[str, str]:
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise ValueError("Browser headers must be a JSON object")
+        headers: dict[str, str] = {}
+        for name, header_value in value.items():
+            if not isinstance(name, str) or not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", name):
+                raise ValueError("Browser header name is invalid")
+            if not isinstance(header_value, str) or "\r" in header_value or "\n" in header_value:
+                raise ValueError("Browser header value is invalid")
+            headers[name] = header_value
+        return headers
 
     def _fail(self, task: ResearchTask, error: str) -> ResearchTask:
         task.status = ResearchTaskStatus.FAILED

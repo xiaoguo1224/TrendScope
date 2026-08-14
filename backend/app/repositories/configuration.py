@@ -46,8 +46,11 @@ class AppSettingRepository:
     def list(self) -> Sequence[AppSetting]:
         return self.database.scalars(select(AppSetting).order_by(AppSetting.key)).all()
 
+    def get_by_key(self, key: str) -> AppSetting | None:
+        return self.database.scalar(select(AppSetting).where(AppSetting.key == key))
+
     def upsert(self, key: str, values: dict[str, Any]) -> AppSetting:
-        item = self.database.scalar(select(AppSetting).where(AppSetting.key == key))
+        item = self.get_by_key(key)
         if item is None:
             item = AppSetting(key=key, **values)
             self.database.add(item)

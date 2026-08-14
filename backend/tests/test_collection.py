@@ -9,6 +9,7 @@ from app.models.content import ContentItem, ContentMetricSnapshot
 from app.models.research_task import ResearchTask, ResearchTaskStatus
 from app.providers.llm import LLMProvider
 from app.services.collection import ContentCollectionService
+from app.services.platform_configuration_test import PlatformConfigurationTestService
 from app.services.query_expansion import QueryExpansionService
 
 
@@ -22,6 +23,35 @@ def test_collection_defaults_include_enabled_generic_public_adapter(client) -> N
     platform = next(item for item in client.get("/api/v1/config/platforms").json() if item["name"] == "generic-web")
     assert platform["enabled"] is True
     assert platform["search_url_template"].startswith("https://")
+
+
+def test_collection_passes_configured_headers_to_browser() -> None:
+    browser = ContentCollectionService._create_browser({"headless": True, "timeout_seconds": 15, "headers": {"Cookie": "session=example", "Authorization": "Bearer example"}})
+    assert browser.headers == {"Cookie": "session=example", "Authorization": "Bearer example"}
+
+
+@pytest.mark.anyio
+async def test_platform_configuration_test_uses_nested_selectors_and_returns_first_content(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    config = PlatformConfig(
+        name="nested-test", search_url_template="https://example.test/search?q={query}",
+        selectors={"search": {"result_container": ".card", "content_link": "a", "cover": "img", "title": ".title", "author": ".author", "like_count": ".likes"}, "detail": {"content": ".body", "image": "img", "collect_count": ".collect", "comment_count": ".comment"}},
+        parser_rules={"content_id": {"source": "url", "pattern": "/explore/([^/?]+)"}, "url": {"source": "content_link", "type": "href"}, "cover_url": {"source": "cover", "type": "src"}, "text": {"source": "content", "type": "text"}, "images": {"source": "image", "type": "src_list"}, "collect_count": {"source": "collect_count", "type": "compact_number"}},
+    )
+    session.add(config)
+    session.commit()
+    browser = MockBrowserAdapter([{"content_link": "https://example.test/explore/abc", "cover": "https://example.test/cover.jpg", "title": "First post", "author": "Creator", "like_count": "1.2k", "content": "Visible detail", "image": ["https://example.test/one.jpg", "https://example.test/two.jpg"], "collect_count": "3821", "comment_count": "216"}])
+
+    result = await PlatformConfigurationTestService(session, browser_factory=lambda _: browser).run(config, query="coffee", limit=50)
+
+    assert result.success is True
+    assert result.search_result_count == 1
+    assert result.first_result and result.first_result["external_id"] == "abc"
+    assert result.first_result["like_count"] == 1200
+    assert result.detail_result and result.detail_result["text"] == "Visible detail"
+    assert result.detail_result["favorite_count"] == 3821
+    assert result.detail_result["image_urls"] == ["https://example.test/one.jpg", "https://example.test/two.jpg"]
 
 
 @pytest.mark.anyio

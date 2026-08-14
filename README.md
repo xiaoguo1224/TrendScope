@@ -95,7 +95,7 @@ uv run alembic revision --autogenerate -m "describe change"
 
 ## 当前能力与运行边界
 
-系统提供 `generic-web` 平台适配器：它从 SQLite 中读取搜索 URL、DOM Selector 和解析规则，通过 Playwright 仅处理正常浏览可见的公开 HTTP(S) 页面。平台配置、Browser 参数、下载图片开关、LLM Provider 基础配置及 Query Expansion Prompt 都可在“系统配置”页面维护。
+系统提供可配置的 `generic-web` 采集适配器：它从 SQLite 中读取搜索 URL、搜索/详情 Selector 和解析规则，通过 Playwright 仅处理正常浏览可见的公开 HTTP(S) 页面。默认会写入 `generic-web` 与可编辑的小红书示例配置；常用 Selector 可在表单中直接填写，复杂规则可在“高级配置”中维护。保存后可使用“测试配置”执行一次受限公开页面测试，查看搜索卡片数、第一条内容和详情解析结果。平台配置、Browser 参数、可选请求 Header（例如 Cookie 或 Authorization，留空即不发送）、下载图片开关、LLM Provider 基础配置及 Query Expansion Prompt 都可在“系统配置”页面维护。
 
 执行 `POST /api/v1/research/tasks/{id}/run` 后，系统保留用户关键词、用 Mock LLM 扩展查询词、采集并规范化内容、写入 `ContentItem` 与每次观察的 `ContentMetricSnapshot`，并可选下载公开图片到 `data/tasks/{task_id}/media/{content_id}/`。详情页可查看阶段、进度、扩展关键词、公开指标、缩略图及错误信息。
 

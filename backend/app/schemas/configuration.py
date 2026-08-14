@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -21,7 +22,7 @@ class AppSettingRead(BaseModel):
 class PlatformConfigCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     search_url_template: str | None = Field(default=None, max_length=2048)
-    selectors: dict[str, str] = Field(default_factory=dict)
+    selectors: dict[str, str | dict[str, str]] = Field(default_factory=dict)
     parser_rules: dict[str, object] = Field(default_factory=dict)
     enabled: bool = True
 
@@ -29,6 +30,19 @@ class PlatformConfigCreate(BaseModel):
 class PlatformConfigRead(PlatformConfigCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int
+
+
+class PlatformConfigTestRequest(BaseModel):
+    query: str = Field(default="测试关键词", min_length=1, max_length=200)
+    limit: int = Field(default=50, ge=1, le=50)
+
+
+class PlatformConfigTestRead(BaseModel):
+    success: bool
+    search_result_count: int = 0
+    first_result: dict[str, Any] | None = None
+    detail_result: dict[str, Any] | None = None
+    message: str | None = None
 
 
 class AIProviderConfigCreate(BaseModel):

@@ -6,9 +6,28 @@ def test_setting_defaults_are_persisted_and_updatable(client: TestClient) -> Non
     assert response.status_code == 200
     keys = {item["key"] for item in response.json()}
     assert {"collection_defaults", "browser_defaults"} <= keys
+    browser_defaults = next(item for item in response.json() if item["key"] == "browser_defaults")
+    assert browser_defaults["value"]["headers"] == {}
+    platforms = client.get("/api/v1/config/platforms").json()
+    xiaohongshu = next(item for item in platforms if item["name"] == "xiaohongshu")
+    assert xiaohongshu["selectors"]["search"]["result_container"] == "section.note-item"
     updated = client.put("/api/v1/config/settings/collection_defaults", json={"value": {"max_items": 80}, "description": "Test"})
     assert updated.status_code == 200
     assert updated.json()["value"] == {"max_items": 80}
+
+
+def test_browser_headers_are_persisted_and_reject_injection(client: TestClient) -> None:
+    payload = {"headless": True, "timeout_seconds": 30, "download_images": False, "headers": {"Cookie": "session=example", "Authorization": "Bearer example"}}
+    saved = client.put("/api/v1/config/settings/browser_defaults", json={"value": payload, "description": "Browser headers"})
+    assert saved.status_code == 200
+    assert saved.json()["value"]["headers"]["Cookie"].endswith("mple")
+    assert saved.json()["value"]["headers"]["Cookie"] != payload["headers"]["Cookie"]
+    preserved = client.put("/api/v1/config/settings/browser_defaults", json={"value": saved.json()["value"], "description": "Browser headers"})
+    assert preserved.status_code == 200
+    assert preserved.json()["value"]["headers"] == saved.json()["value"]["headers"]
+
+    invalid = client.put("/api/v1/config/settings/browser_defaults", json={"value": {"headers": {"Cookie\nInjected": "value"}}})
+    assert invalid.status_code == 422
 
 
 def test_ranking_config_crud(client: TestClient) -> None:
@@ -27,3 +46,13 @@ def test_platform_prompt_and_masked_provider_configuration(client: TestClient) -
     assert provider.status_code == 201
     assert provider.json()["api_key"] == "********oken"
     assert client.get("/api/v1/config/platforms").json()[0]["enabled"] is True
+
+
+def test_platform_configuration_accepts_nested_selector_groups_and_reports_validation(client: TestClient) -> None:
+    nested = client.post("/api/v1/config/platforms", json={
+        "name": "nested-platform", "selectors": {"search": {"result_container": ".card", "content_link": "a"}, "detail": {"content": ".body"}}, "parser_rules": {},
+    })
+    assert nested.status_code == 201
+    assert nested.json()["selectors"]["detail"]["content"] == ".body"
+    malformed = client.post("/api/v1/config/platforms", json={"name": "bad-platform", "selectors": {"search": {"nested": {"too": "deep"}}}, "parser_rules": {}})
+    assert malformed.status_code == 422

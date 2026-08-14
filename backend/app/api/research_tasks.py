@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.configuration import ensure_collection_defaults
 from app.core.database import get_db
+from app.models.configuration import PlatformConfig
 from app.models.content import ContentItem
 from app.models.research_task import ResearchTask, ResearchTaskStatus
 from app.repositories.research_task import ResearchTaskRepository
@@ -18,6 +20,10 @@ router = APIRouter(prefix="/research/tasks", tags=["research-tasks"])
 
 @router.post("", response_model=ResearchTaskRead, status_code=status.HTTP_201_CREATED)
 def create_task(payload: ResearchTaskCreate, database: Session = Depends(get_db)) -> ResearchTaskRead:
+    ensure_collection_defaults(database)
+    platform = database.query(PlatformConfig).filter(PlatformConfig.name == payload.platform).one_or_none()
+    if platform is None or not platform.enabled:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Research task platform must be an enabled platform configuration")
     return _task_response(ResearchTaskRepository(database).create(payload), database)
 
 

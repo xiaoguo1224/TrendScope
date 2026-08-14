@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -10,7 +12,7 @@ from app.core.database import get_db
 from app.repositories.configuration import AppSettingRepository, configuration_repositories
 from app.schemas.configuration import (
     AIProviderConfigCreate, AIProviderConfigRead, AppSettingRead, AppSettingUpsert,
-    PlatformConfigCreate, PlatformConfigRead, PromptTemplateCreate, PromptTemplateRead,
+    PlatformConfigCreate, PlatformConfigRead, PlatformConfigTestRead, PlatformConfigTestRequest, PromptTemplateCreate, PromptTemplateRead,
     RankingConfigCreate, RankingConfigRead,
 )
 
@@ -18,7 +20,7 @@ router = APIRouter(prefix="/config", tags=["configuration"])
 
 DEFAULT_SETTINGS: dict[str, tuple[object, str]] = {
     "collection_defaults": ({"max_items": 50, "time_range": "7d", "request_interval_ms": 1200, "scroll_interval_ms": 1000}, "Default collection parameters"),
-    "browser_defaults": ({"headless": True, "timeout_seconds": 30, "download_images": True}, "Default browser parameters"),
+    "browser_defaults": ({"headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}, "Default browser parameters"),
     "report_defaults": ({"concept_count": 10, "prompt_language": "English", "prompt_style": "editorial lifestyle photography", "include_markdown": True}, "Creative concept, image prompt, and report defaults"),
 }
 DEFAULT_GENERIC_WEB_PLATFORM = {
@@ -26,6 +28,36 @@ DEFAULT_GENERIC_WEB_PLATFORM = {
     "search_url_template": "https://www.bing.com/search?q={query}",
     "selectors": {"item": "li.b_algo", "field_title": "h2", "field_url": "h2 a", "field_text": "p"},
     "parser_rules": {"scroll_count": 0, "access_block_indicators": ["captcha", "verify you are human", "access denied"]},
+    "enabled": True,
+}
+DEFAULT_XIAOHONGSHU_PLATFORM = {
+    "name": "xiaohongshu",
+    "search_url_template": "https://www.xiaohongshu.com/search_result?keyword={query}&source=web_search_result_notes",
+    "selectors": {
+        "search": {
+            "result_container": "section.note-item", "content_link": "a[href*='/explore/']", "cover": ".cover img",
+            "title": ".title", "author": ".author .name", "publish_time": ".author .time", "like_count": ".like-wrapper .count",
+        },
+        "detail": {
+            "title": "#detail-title, .title", "content": "#detail-desc, .desc", "image": ".note-slider-img, .swiper-slide img",
+            "author": ".author-wrapper .username, .username", "like_count": ".like-wrapper .count",
+            "collect_count": ".collect-wrapper .count", "comment_count": ".chat-wrapper .count",
+        },
+    },
+    "parser_rules": {
+        "content_id": {"source": "url", "pattern": "/explore/([^/?]+)"},
+        "url": {"source": "content_link", "type": "href", "absolute": True},
+        "cover_url": {"source": "cover", "type": "src"},
+        "title": {"source": "title", "type": "text", "trim": True},
+        "author_name": {"source": "author", "type": "text", "trim": True},
+        "published_at": {"source": "publish_time", "type": "xiaohongshu_time", "optional": True},
+        "like_count": {"source": "like_count", "type": "compact_number", "optional": True},
+        "collect_count": {"source": "collect_count", "type": "compact_number", "optional": True},
+        "comment_count": {"source": "comment_count", "type": "compact_number", "optional": True},
+        "images": {"source": "image", "type": "src_list", "deduplicate": True},
+        "text": {"source": "content", "type": "text", "trim": True, "optional": True},
+        "access_block_indicators": ["captcha", "verify you are human", "access denied", "登录后", "请登录"],
+    },
     "enabled": True,
 }
 DEFAULT_PROMPTS: tuple[dict[str, object], ...] = (
@@ -44,11 +76,55 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Configuration item not found")
 
 
+_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
+
+
+def _validate_browser_headers(headers: object) -> None:
+    """Reject malformed header input before it reaches the browser context."""
+    if headers is None:
+        return
+    if not isinstance(headers, dict):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser headers must be a JSON object")
+    for name, value in headers.items():
+        if not isinstance(name, str) or not _HEADER_NAME.fullmatch(name):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser header name is invalid")
+        if not isinstance(value, str) or "\r" in value or "\n" in value:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser header value is invalid")
+
+
+def _mask_secret(value: str) -> str:
+    return "*" * max(0, len(value) - 4) + value[-4:]
+
+
+def _setting_read(item: Any) -> AppSettingRead:
+    value = item.value
+    if item.key == "browser_defaults" and isinstance(value, dict):
+        value = dict(value)
+        headers = value.get("headers")
+        if isinstance(headers, dict):
+            value["headers"] = {str(name): _mask_secret(header_value) for name, header_value in headers.items() if isinstance(header_value, str)}
+    return AppSettingRead.model_validate({"key": item.key, "value": value, "description": item.description, "updated_at": item.updated_at})
+
+
+def _preserve_masked_browser_headers(database: Session, incoming: dict[str, object]) -> dict[str, object]:
+    headers = incoming.get("headers")
+    if not isinstance(headers, dict):
+        return incoming
+    existing = AppSettingRepository(database).get_by_key("browser_defaults")
+    existing_value = existing.value if existing and isinstance(existing.value, dict) else {}
+    existing_headers = existing_value.get("headers") if isinstance(existing_value.get("headers"), dict) else {}
+    incoming["headers"] = {
+        name: existing_headers[name] if isinstance(value, str) and isinstance(existing_headers.get(name), str) and value == _mask_secret(existing_headers[name]) else value
+        for name, value in headers.items()
+    }
+    return incoming
+
+
 @router.get("/settings", response_model=list[AppSettingRead])
 def list_settings(database: Session = Depends(get_db)) -> list[AppSettingRead]:
     ensure_collection_defaults(database)
     repository = AppSettingRepository(database)
-    return list(repository.list())
+    return [_setting_read(item) for item in repository.list()]
 
 
 def ensure_collection_defaults(database: Session) -> None:
@@ -58,8 +134,10 @@ def ensure_collection_defaults(database: Session) -> None:
         if key not in existing_settings:
             settings.upsert(key, {"value": value, "description": description})
     platforms = configuration_repositories(database)["platforms"]
-    if not any(item.name == "generic-web" for item in platforms.list()):
-        platforms.create(DEFAULT_GENERIC_WEB_PLATFORM)
+    existing_platforms = {item.name for item in platforms.list()}
+    for platform in (DEFAULT_GENERIC_WEB_PLATFORM, DEFAULT_XIAOHONGSHU_PLATFORM):
+        if str(platform["name"]) not in existing_platforms:
+            platforms.create(platform)
 
 
 def ensure_analysis_defaults(database: Session) -> None:
@@ -91,7 +169,14 @@ def reset_prompt_defaults(database: Session = Depends(get_db)) -> list[PromptTem
 
 @router.put("/settings/{key}", response_model=AppSettingRead)
 def update_setting(key: str, payload: AppSettingUpsert, database: Session = Depends(get_db)) -> AppSettingRead:
-    return AppSettingRepository(database).upsert(key, payload.model_dump())
+    value = payload.value
+    if key == "browser_defaults":
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Browser defaults must be a JSON object")
+        value = _preserve_masked_browser_headers(database, dict(value))
+        _validate_browser_headers(value.get("headers"))
+    saved = AppSettingRepository(database).upsert(key, {**payload.model_dump(), "value": value})
+    return _setting_read(saved)
 
 
 @router.post("/settings/reset-defaults", response_model=list[AppSettingRead])
@@ -99,7 +184,7 @@ def reset_settings(database: Session = Depends(get_db)) -> list[AppSettingRead]:
     repository = AppSettingRepository(database)
     for key, (value, description) in DEFAULT_SETTINGS.items():
         repository.upsert(key, {"value": value, "description": description})
-    return list(repository.list())
+    return [_setting_read(item) for item in repository.list()]
 
 
 def _crud_routes(
@@ -115,6 +200,8 @@ def _crud_routes(
         try:
             validated = create_schema.model_validate(payload)
             return configuration_repositories(database)[repository_key].create(validated.model_dump())
+        except ValidationError as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=error.errors()) from error
         except IntegrityError as error:
             database.rollback()
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Configuration name already exists") from error
@@ -131,6 +218,8 @@ def _crud_routes(
             if repository_key == "ai-providers" and not values.get("api_key"):
                 values.pop("api_key")
             return repository.update(item, values)
+        except ValidationError as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=error.errors()) from error
         except IntegrityError as error:
             database.rollback()
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Configuration name already exists") from error
@@ -149,6 +238,18 @@ _crud_routes("/platforms", PlatformConfigCreate, PlatformConfigRead, "platforms"
 _crud_routes("/ai-providers", AIProviderConfigCreate, AIProviderConfigRead, "ai-providers")
 _crud_routes("/prompt-templates", PromptTemplateCreate, PromptTemplateRead, "prompt-templates")
 _crud_routes("/ranking-configs", RankingConfigCreate, RankingConfigRead, "ranking-configs")
+
+
+@router.post("/platforms/{item_id}/test", response_model=PlatformConfigTestRead)
+async def test_platform_configuration(
+    item_id: int, payload: PlatformConfigTestRequest, database: Session = Depends(get_db),
+) -> PlatformConfigTestRead:
+    from app.services.platform_configuration_test import PlatformConfigurationTestService
+
+    platform = configuration_repositories(database)["platforms"].get(item_id)
+    if platform is None:
+        raise _not_found()
+    return await PlatformConfigurationTestService(database).run(platform, query=payload.query, limit=payload.limit)
 
 
 @router.post("/ranking-configs/reset-default", response_model=RankingConfigRead)

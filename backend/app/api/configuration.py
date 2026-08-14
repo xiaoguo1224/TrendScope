@@ -21,7 +21,7 @@ router = APIRouter(prefix="/config", tags=["configuration"])
 
 DEFAULT_SETTINGS: dict[str, tuple[object, str]] = {
     "collection_defaults": ({"max_items": 50, "time_range": "7d", "request_interval_ms": 1200, "scroll_interval_ms": 1000}, "Default collection parameters"),
-    "browser_defaults": ({"mode": "isolated", "cdp_endpoint": "http://127.0.0.1:9222", "headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}, "Default browser parameters"),
+    "browser_defaults": ({"mode": "isolated", "cdp_endpoint": "http://127.0.0.1:9222", "headless": True, "timeout_seconds": 120, "download_images": True, "headers": {}}, "Default browser parameters"),
     "report_defaults": ({"concept_count": 10, "prompt_language": "English", "prompt_style": "editorial lifestyle photography", "include_markdown": True}, "Creative concept, image prompt, and report defaults"),
 }
 DEFAULT_GENERIC_WEB_PLATFORM = {

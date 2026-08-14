@@ -112,9 +112,17 @@ uv run alembic revision --autogenerate -m "describe change"
 
 系统提供可配置的 `generic-web` 采集适配器：它从 SQLite 中读取搜索 URL、搜索/详情 Selector 和解析规则，通过隔离 Playwright 或本机系统浏览器 CDP 连接，仅处理正常浏览可见的公开 HTTP(S) 页面。默认会写入 `generic-web` 与可编辑的小红书示例配置；常用 Selector 可在表单中直接填写，复杂规则可在“高级配置”中维护。保存后可使用“测试配置”执行一次受限公开页面测试，查看搜索卡片数、第一条内容和详情解析结果。平台配置、Browser 参数、可选请求 Header（例如 Cookie 或 Authorization，留空即不发送）、下载图片开关、LLM Provider 基础配置及 Query Expansion Prompt 都可在“系统配置”页面维护。
 
-启用的 LLM / Vision Provider 按 Base URL 的路径自动选择适配器，无需选择“调用协议”。支持 OpenAI 兼容服务（填写 `/v1`、`/responses`、`/chat` 或 `/chat/completions`；`/chat` 自动补为 `/chat/completions`）、Anthropic Messages（`/v1/messages`）、Gemini Generate Content（模型 URL 以 `:generateContent` 结尾）和 Ollama（`/api/chat` 或 `/api/generate`）。对于只填写基础 URL 的路由网关，系统会依次协商 Responses、Chat Completions 和 Messages；只有前一路径明确不支持或返回空结果时才继续尝试下一路径。SQLite 中的历史 UTC 时间在 API 输出和页面展示时统一转换为东八区（`Asia/Shanghai`）。
+浏览器页面操作默认超时为 120 秒，可在“系统配置 → 浏览器”调整；前端对“开始研究”保留 15 分钟请求预算，对显式模型分析保留 5 分钟，避免浏览器仍在滚动、提取或下载公开媒体时由界面提前中断。扩词会严格校验六个分类字段；模型返回不符合协议或只回显原词时会发起一次修复请求，仍失败才使用标明日志的本地兜底词，保证采集能覆盖补充关键词。
+
+扩词结果会保存到当前 `ResearchTask.expanded_keywords`。同一任务再次执行采集时，只要结果仍包含补充词，就会直接复用而不调用模型；新建任务不会跨任务复用扩词结果。
+
+下载的公开媒体会根据图片内容识别 JPEG、PNG、GIF 或 WebP，而不信任 URL 后缀；历史 `.bin` 文件同样会在送入视觉模型前识别真实 MIME。非图片或访问拦截页面不会发送给视觉模型。
+
+LLM / Vision 业务服务统一通过 `ModelGateway` 调用模型；它不依赖 URL 格式、SDK 或厂商响应 JSON。每个 Provider 在“系统配置 → AI Provider”中声明协议（自动兼容探测、OpenAI Responses / Chat Completions、Anthropic Messages、Gemini 或 Ollama）、模型能力和路由优先级，再填写 Base URL、模型名和密钥。相同用途按优先级从小到大选择；仅在 `429`、超时、网络故障或 `5xx` 等可恢复异常时切换下一 Provider，参数错误、鉴权错误和能力不匹配会明确失败而不会被掩盖。`auto` 保持历史 URL 兼容行为，推荐新配置明确选择协议。SQLite 中的历史 UTC 时间在 API 输出和页面展示时统一转换为东八区（`Asia/Shanghai`）。
 
 每个 Provider 保存后均可点击“测试模型配置”。LLM 使用最小 JSON 请求验证连接；Vision 使用内置的透明 1×1 PNG 验证视觉输入能力，不会上传采集到的平台图片。测试结果会显示实际调用地址及安全截断的响应摘要。
+
+任务分析采用“证据工具 + 一份综合结论”模式：`POST /api/v1/research/tasks/{id}/analysis/run` 才会调用模型，模型只能在任务范围内读取榜单、指定内容详情、可用本地图片和任务约束，然后持久化一份文案、视觉、受众、热度和趋势总结。`GET /analysis` 与 `GET /trends` 只读取该结果，页面切换不会按内容逐条重跑模型。每次显式重新生成会使依赖旧结论的 Concepts、Prompts 和报告失效，并在下次读取时基于新结论重建。
 
 执行 `POST /api/v1/research/tasks/{id}/run` 后，系统保留用户关键词、用 Mock LLM 扩展查询词、采集并规范化内容、写入 `ContentItem` 与每次观察的 `ContentMetricSnapshot`，并可选下载公开图片到 `data/tasks/{task_id}/media/{content_id}/`。详情页可查看阶段、进度、扩展关键词、公开指标、缩略图及错误信息。
 

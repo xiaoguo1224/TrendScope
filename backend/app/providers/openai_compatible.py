@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
-import mimetypes
 from pathlib import Path
 from typing import Any, Literal
 from urllib.error import HTTPError, URLError
@@ -11,17 +10,18 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from app.models.configuration import AIProviderConfig
+from app.media import detect_image_mime
 
 
 ProviderRoute = Literal["openai_responses", "openai_chat", "anthropic_messages", "gemini", "ollama_generate", "ollama_chat"]
 
 
 class OpenAICompatibleProvider:
-    """URL-routed client for OpenAI-compatible, Anthropic, Gemini and Ollama APIs.
+    """Protocol adapter used by :class:`app.model_gateway.ModelGateway`.
 
-    The URL is the contract: complete paths such as ``/v1/messages`` or
-    ``:generateContent`` choose the matching wire format. A plain base URL keeps
-    a safe OpenAI-compatible fallback for services that expose only ``/v1``.
+    The gateway selects this adapter from the saved protocol configuration.  Its
+    URL helpers only construct an endpoint inside the chosen protocol; business
+    services never inspect either the URL or a vendor response envelope.
     """
 
     def __init__(self, config: AIProviderConfig) -> None:
@@ -34,6 +34,9 @@ class OpenAICompatibleProvider:
         self.base_url = config.base_url
         self.timeout_seconds = config.timeout_seconds or 60
         self.max_retries = config.max_retries if config.max_retries is not None else 2
+        self.protocol: ProviderRoute | Literal["auto"] = getattr(config, "protocol", "auto") or "auto"
+        if self.protocol not in {"auto", "openai_responses", "openai_chat", "anthropic_messages", "gemini", "ollama_generate", "ollama_chat"}:
+            raise ValueError(f"Unsupported AI provider protocol '{self.protocol}'")
         self.last_endpoint = config.base_url
         self.last_request_preview: str | None = None
 
@@ -43,9 +46,14 @@ class OpenAICompatibleProvider:
         return _json_object(await self._request(system=system, user=user))
 
     async def analyze_image(self, *, image_path: Path, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
-        mime_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
+        image_bytes = image_path.read_bytes()
+        mime_type = detect_image_mime(image_bytes, image_path.name)
+        if mime_type is None:
+            raise ValueError(
+                f"Local media '{image_path.name}' is not a supported JPEG, PNG, GIF, or WebP image; it was not sent to the vision provider."
+            )
         return await self.analyze_image_bytes(
-            image_bytes=image_path.read_bytes(), mime_type=mime_type, prompt=prompt, context=context,
+            image_bytes=image_bytes, mime_type=mime_type, prompt=prompt, context=context,
         )
 
     async def analyze_image_bytes(self, *, image_bytes: bytes, mime_type: str, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
@@ -60,7 +68,7 @@ class OpenAICompatibleProvider:
 
     async def _request(self, *, system: str, user: str, image_data: str | None = None, mime_type: str | None = None) -> str:
         last_error: Exception | None = None
-        for route in _routes_to_try(self.base_url, self.model_name):
+        for route in _routes_to_try(self.base_url, self.model_name, self.protocol):
             endpoint = _endpoint_for(self.base_url, route)
             payload = _payload_for(route, self.model_name, system, user, image_data, mime_type)
             headers = _headers_for(route, self.api_key)
@@ -117,7 +125,9 @@ def _validate_http_url(value: str) -> None:
         raise ValueError("AI provider Base URL must be an HTTP(S) URL")
 
 
-def _routes_to_try(base_url: str, model_name: str) -> list[ProviderRoute]:
+def _routes_to_try(base_url: str, model_name: str, protocol: ProviderRoute | Literal["auto"] = "auto") -> list[ProviderRoute]:
+    if protocol != "auto":
+        return [protocol]
     value = base_url.rstrip("/").lower()
     if value.endswith("/messages"):
         return ["anthropic_messages"]

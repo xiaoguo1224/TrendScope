@@ -41,6 +41,11 @@ class AIProviderConfig(Base):
     base_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The wire protocol is a provider concern, not a business-service concern.
+    # "auto" retains the compatibility behaviour for existing saved providers.
+    protocol: Mapped[str] = mapped_column(String(50), default="auto", server_default="auto")
+    capabilities: Mapped[dict[str, bool]] = mapped_column(JSON, default=dict)
+    priority: Mapped[int] = mapped_column(Integer, default=100, server_default="100")
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
     max_retries: Mapped[int] = mapped_column(Integer, default=2)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)

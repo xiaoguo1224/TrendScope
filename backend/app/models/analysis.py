@@ -33,6 +33,18 @@ class TrendAnalysisRecord(Base):
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class TaskAnalysisRecord(Base):
+    """One model-authored, task-level research summary with traceable evidence."""
+
+    __tablename__ = "task_analysis_records"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    research_task_id: Mapped[int] = mapped_column(ForeignKey("research_tasks.id", ondelete="CASCADE"), unique=True, index=True)
+    result: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
+    analysis_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class CreativeConceptRecord(Base):
     """A task-scoped creative direction synthesized from aggregated evidence."""
 

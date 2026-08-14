@@ -8,7 +8,9 @@ export interface RankingConfig { id?: number; name: string; enabled: boolean; li
 export interface PlatformConfig { id?: number; name: string; search_url_template: string | null; selectors: Record<string, string | Record<string, string>>; parser_rules: Record<string, unknown>; enabled: boolean }
 export interface PlatformConfigTestResult { success: boolean; search_result_count: number; first_result: Record<string, unknown> | null; detail_result: Record<string, unknown> | null; message: string | null }
 export interface BrowserConnectionTestResult { success: boolean; message: string }
-export interface AIProviderConfig { id?: number; name: string; provider_type: string; base_url: string | null; model_name: string | null; api_key?: string | null; timeout_seconds: number; max_retries: number; enabled: boolean }
+export type AIProviderProtocol = 'auto' | 'openai_responses' | 'openai_chat' | 'anthropic_messages' | 'gemini' | 'ollama_generate' | 'ollama_chat'
+export interface AIProviderCapabilities { text: boolean; vision: boolean; structured_output: boolean; tools: boolean; streaming: boolean }
+export interface AIProviderConfig { id?: number; name: string; provider_type: string; base_url: string | null; model_name: string | null; api_key?: string | null; protocol: AIProviderProtocol; capabilities: AIProviderCapabilities; priority: number; timeout_seconds: number; max_retries: number; enabled: boolean }
 export interface AIProviderConfigTestResult { success: boolean; endpoint: string; request_preview: string | null; response_preview: string | null; message: string }
 export interface PromptTemplate { id?: number; name: string; purpose: string; template: string; enabled: boolean }
 
@@ -104,7 +106,27 @@ export interface ContentAnalysis {
   error_message?: string | null
   [key: string]: unknown
 }
-export interface TaskAnalysisResult { items: ContentAnalysis[]; limitations: string[] }
+export interface TaskAnalysisResult {
+  task_id: number
+  copywriting_summary: string | null
+  visual_summary: string | null
+  audience_summary: string | null
+  popularity_summary: string | null
+  reusable_patterns: string[]
+  trend_tags: string[]
+  evidence: string[]
+  limitations: string[]
+  hot_topics: string[]
+  rising_topics: string[]
+  visual_patterns: string[]
+  copywriting_patterns: string[]
+  audience_patterns: string[]
+  scenario_patterns: string[]
+  style_patterns: string[]
+  domain_patterns: string[]
+  analysis_error: string | null
+  analyzed_at: string | null
+}
 export interface TrendAnalysis {
   hot_topics?: string[]
   rising_topics?: string[]

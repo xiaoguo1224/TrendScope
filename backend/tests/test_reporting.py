@@ -11,7 +11,7 @@ from app.models.analysis import CreativeConceptRecord, ImagePromptRecord, Report
 from app.models.configuration import PromptTemplate
 from app.models.content import ContentItem
 from app.models.research_task import ResearchTask
-from app.schemas.analysis import TrendAnalysisRead
+from app.schemas.analysis import TaskAnalysisRead, TrendAnalysisRead
 from app.services.reporting import ReportingService
 
 
@@ -112,7 +112,7 @@ def test_prompt_composition_uses_templates_and_visual_domain_evidence(client, tm
         visual_patterns=["warm close-up"], domain_patterns=["brew_method=pour-over"],
     )
     concept = service._create_concepts(task, trends)[0]
-    evidence = service._visual_evidence([], trends)
+    evidence = service._visual_evidence(TaskAnalysisRead(task_id=task.id, visual_summary="warm close-up"), trends)
     prompt = service._create_prompt(task, concept, {"prompt_language": "English", "prompt_style": "editorial"}, evidence)
 
     assert "CONCEPT_GUIDANCE portable coffee" in concept.concept

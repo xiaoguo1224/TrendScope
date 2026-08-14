@@ -9,14 +9,14 @@ from sqlalchemy.orm import Session
 
 from app.api.configuration import ensure_analysis_defaults
 from app.core.config import get_settings
-from app.models.analysis import ContentAnalysisRecord, CreativeConceptRecord, ImagePromptRecord, ReportRecord
+from app.models.analysis import CreativeConceptRecord, ImagePromptRecord, ReportRecord
 from app.models.configuration import AppSetting, PromptTemplate
 from app.models.content import ContentItem
 from app.models.research_task import ResearchTask
-from app.schemas.analysis import AnalysisItemRead, RankingsRead, TrendAnalysisRead
+from app.schemas.analysis import RankingsRead, TaskAnalysisRead, TrendAnalysisRead
 from app.schemas.reporting import CreativeConceptRead, ImagePromptRead, ReportRead
-from app.services.analysis import AnalysisService
 from app.services.ranking import RankingService
+from app.services.task_analysis import TaskAnalysisService
 
 
 class ReportingService:
@@ -29,18 +29,15 @@ class ReportingService:
     async def concepts_for_task(self, task: ResearchTask) -> list[CreativeConceptRead]:
         concepts = self._concept_records(task.id)
         if not concepts:
-            trends = await AnalysisService(self.database).trends_for_task(task)
+            trends = TaskAnalysisService(self.database).trends(task)
             concepts = self._create_concepts(task, trends)
         return [CreativeConceptRead.model_validate(item) for item in concepts]
 
     async def prompts_for_task(self, task: ResearchTask) -> list[ImagePromptRead]:
         await self.concepts_for_task(task)
         concepts = self._concept_records(task.id)
-        trends = await AnalysisService(self.database).trends_for_task(task)
-        analysis_records = self.database.scalars(
-            select(ContentAnalysisRecord).join(ContentItem).where(ContentItem.research_task_id == task.id)
-        ).all()
-        visual_evidence = self._visual_evidence(analysis_records, trends)
+        trends = TaskAnalysisService(self.database).trends(task)
+        visual_evidence = self._visual_evidence(TaskAnalysisService(self.database).read(task), trends)
         existing_rows = self.database.execute(
             select(ImagePromptRecord, CreativeConceptRecord)
             .join(CreativeConceptRecord, ImagePromptRecord.creative_concept_id == CreativeConceptRecord.id)
@@ -64,11 +61,11 @@ class ReportingService:
     async def report_for_task(self, task: ResearchTask, *, regenerate: bool = False) -> ReportRead:
         persisted = self.database.scalar(select(ReportRecord).where(ReportRecord.research_task_id == task.id))
         if persisted is None or regenerate:
-            trends = await AnalysisService(self.database).trends_for_task(task)
+            trends = TaskAnalysisService(self.database).trends(task)
             concepts = await self.concepts_for_task(task)
             prompts = await self.prompts_for_task(task)
             rankings = RankingService(self.database).rank_task(task.id)
-            analysis = await AnalysisService(self.database).analyze_task(task)
+            analysis = TaskAnalysisService(self.database).read(task)
             content, limitations = self._report_content(task, rankings, analysis, trends, concepts, prompts)
             markdown = self._markdown(content)
             report_path, prompts_path = self._write_exports(task.id, content, markdown, prompts)
@@ -165,32 +162,31 @@ class ReportingService:
         )
 
     def _report_content(
-        self, task: ResearchTask, rankings: RankingsRead, analysis: list[AnalysisItemRead], trends: TrendAnalysisRead,
+        self, task: ResearchTask, rankings: RankingsRead, analysis: TaskAnalysisRead, trends: TrendAnalysisRead,
         concepts: list[CreativeConceptRead], prompts: list[ImagePromptRead],
     ) -> tuple[dict[str, Any], list[str]]:
         items = self.database.scalars(select(ContentItem).where(ContentItem.research_task_id == task.id)).all()
         boards = {board.name: [item.model_dump(mode="json") for item in board.items[:10]] for board in rankings.boards}
-        valid_analysis = [item for item in analysis if item.analysis_error is None]
-        image_analysis = [item.model_dump(mode="json") for item in valid_analysis if item.visual_analyses]
         limitations: list[str] = []
         if not items:
             limitations.append("No public content was collected, so rankings and trend evidence are empty.")
         if trends.insufficient_data and trends.limitation:
             limitations.append(trends.limitation)
-        if any(item.analysis_error for item in analysis):
-            limitations.append("Some individual content analyses failed; successful records only were aggregated.")
-        if not any(item.visual_analyses for item in valid_analysis):
+        if analysis.analysis_error:
+            limitations.append(analysis.analysis_error)
+        if not analysis.visual_summary:
             limitations.append("No local images were available for visual analysis.")
+        limitations.extend(analysis.limitations)
         content: dict[str, Any] = {
             "research_task": {"id": task.id, "platform": task.platform, "topic": task.topic, "time_range": task.time_range, "research_goals": task.research_goals},
-            "data_overview": {"collected_content_count": len(items), "analyzed_content_count": trends.analyzed_content_count, "image_analysis_count": len(image_analysis)},
+            "data_overview": {"collected_content_count": len(items), "analyzed_content_count": trends.analyzed_content_count, "image_analysis_count": 1 if analysis.visual_summary else 0},
             "search_keywords": {"input": task.keywords, "expanded": task.expanded_keywords or {}},
             "hot": boards.get("Hot", []), "rising": boards.get("Rising", []),
-            "popular_articles": [item.model_dump(mode="json") for item in valid_analysis[:10]],
-            "popular_images": image_analysis[:10],
-            "copywriting_structure_analysis": trends.copywriting_patterns,
-            "visual_structure_analysis": trends.visual_patterns,
-            "popularity_reason_analysis": [item.content_analysis.why_it_may_be_popular for item in valid_analysis if item.content_analysis],
+            "popular_articles": [],
+            "popular_images": [],
+            "copywriting_structure_analysis": analysis.copywriting_summary,
+            "visual_structure_analysis": analysis.visual_summary,
+            "popularity_reason_analysis": analysis.popularity_summary,
             "current_hot_trends": trends.hot_topics,
             "recent_rising_trends": trends.rising_topics,
             "audience_preferences": trends.audience_patterns,
@@ -252,23 +248,9 @@ class ReportingService:
         return self._compact_text(value)
 
     @classmethod
-    def _visual_evidence(
-        cls, records: list[ContentAnalysisRecord], trends: TrendAnalysisRead,
-    ) -> dict[str, str]:
-        visual_details: list[str] = []
-        domain_attributes: list[str] = []
-        for record in records:
-            for raw_visual in record.visual_analyses or []:
-                visual = raw_visual if isinstance(raw_visual, dict) else {}
-                for field in ("subject", "style", "composition", "camera_angle", "lighting", "background", "visual_focus", "scene", "mood"):
-                    if value := visual.get(field):
-                        if str(value) != "not_classified":
-                            visual_details.append(f"{field}={value}")
-                visual_details.extend(str(item) for item in visual.get("notable_elements", []) if item)
-                for key, value in (visual.get("domain_attributes") or {}).items():
-                    domain_attributes.append(f"{key}={value}")
-        visual_details.extend(f"trend_visual={item}" for item in trends.visual_patterns + trends.style_patterns if item)
-        domain_attributes.extend(str(item) for item in trends.domain_patterns if item)
+    def _visual_evidence(cls, analysis: TaskAnalysisRead, trends: TrendAnalysisRead) -> dict[str, str]:
+        visual_details = [value for value in [analysis.visual_summary, *trends.visual_patterns, *trends.style_patterns] if value]
+        domain_attributes = list(trends.domain_patterns)
         return {
             "visual_context": cls._compact_text("; ".join(dict.fromkeys(visual_details)) or "No visual evidence was available."),
             "domain_attributes": cls._compact_text("; ".join(dict.fromkeys(domain_attributes)) or "No domain-specific attributes were available."),

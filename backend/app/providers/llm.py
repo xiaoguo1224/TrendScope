@@ -12,6 +12,27 @@ class MockLLMProvider:
 
     async def generate_structured(self, *, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
         analysis_type = str(context.get("analysis_type", ""))
+        if analysis_type == "tool_plan":
+            return {"calls": [{"name": "get_ranked_contents", "arguments": {"board": "Hot", "limit": 8}}]}
+        if analysis_type == "task_summary":
+            observations = context.get("tool_observations", [])
+            item_count = sum(
+                len(item.get("result", {}).get("items", []))
+                for item in observations if isinstance(item, dict) and isinstance(item.get("result"), dict)
+            )
+            topic = str(context.get("task", {}).get("topic", "this topic")) if isinstance(context.get("task"), dict) else "this topic"
+            return {
+                "copywriting_summary": f"The representative {topic} content uses concise, topic-led framing.",
+                "visual_summary": "No representative local image was available for visual synthesis.",
+                "audience_summary": "Audience evidence is limited to the collected public content.",
+                "popularity_summary": f"The conclusion is based on {item_count} ranked representative items and their observed public metrics.",
+                "reusable_patterns": ["Use a clear topic-led opening"], "trend_tags": [topic],
+                "evidence": [f"Read {item_count} ranked representative items through task-scoped tools."],
+                "limitations": ["Offline mock analysis does not infer visual details beyond available evidence."],
+                "hot_topics": [topic], "rising_topics": [], "visual_patterns": [],
+                "copywriting_patterns": ["Use a clear topic-led opening"], "audience_patterns": [],
+                "scenario_patterns": [], "style_patterns": [], "domain_patterns": [],
+            }
         if analysis_type == "text":
             title = str(context.get("title") or "").strip()
             text = str(context.get("text") or "").strip()

@@ -1,7 +1,9 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-const client = axios.create({ baseURL: '/api/v1', timeout: 15_000 })
+// Ordinary API reads remain bounded; long-running collection and explicit
+// model-generation requests override this with their own user-visible budget.
+const client = axios.create({ baseURL: '/api/v1', timeout: 60_000 })
 client.interceptors.response.use(
   (response) => response,
   (error: unknown) => {

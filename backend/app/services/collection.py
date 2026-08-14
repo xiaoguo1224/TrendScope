@@ -17,6 +17,7 @@ from app.api.configuration import ensure_collection_defaults
 from app.models.configuration import AppSetting, PlatformConfig
 from app.models.content import ContentItem, ContentMetricSnapshot
 from app.models.research_task import ResearchTask, ResearchTaskStatus
+from app.media import image_suffix
 from app.platforms.generic_web import PublicAccessBlockedError
 from app.platforms.registry import PlatformRegistry
 from app.services.query_expansion import QueryExpansionService
@@ -53,7 +54,10 @@ class ContentCollectionService:
         task.error_message = None
         self.database.commit()
         try:
-            task.expanded_keywords = await self.query_expansion.expand(task)
+            if self._has_reusable_expansion(task):
+                logger.info("query_expansion_reused task_id=%s", task.id)
+            else:
+                task.expanded_keywords = await self.query_expansion.expand(task)
             task.status = ResearchTaskStatus.COLLECTING
             self.database.commit()
             browser = self.browser_factory(self._browser_settings())
@@ -132,8 +136,10 @@ class ContentCollectionService:
         for index, url in enumerate(urls):
             try:
                 content = await browser.download_media(url)
-                suffix = Path(url.split("?", 1)[0]).suffix.lower()
-                suffix = suffix if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif"} else ".bin"
+                suffix = image_suffix(content, url)
+                if suffix is None:
+                    logger.warning("public_media_not_supported_image task_id=%s content_id=%s url=%s", task_id, content_id, url)
+                    continue
                 destination = media_dir / f"image-{index + 1}{suffix}"
                 destination.write_bytes(content)
                 paths.append(destination.as_posix())
@@ -146,9 +152,23 @@ class ContentCollectionService:
         values = list(task.keywords) + [keyword for category in expanded.values() for keyword in category]
         return list(dict.fromkeys(keyword.strip() for keyword in values if keyword.strip()))
 
+    @staticmethod
+    def _has_reusable_expansion(task: ResearchTask) -> bool:
+        expanded = task.expanded_keywords
+        if not isinstance(expanded, dict):
+            return False
+        original = {value.strip().casefold() for value in task.keywords if value.strip()}
+        return any(
+            isinstance(values, list) and any(
+                isinstance(value, str) and value.strip() and value.strip().casefold() not in original
+                for value in values
+            )
+            for values in expanded.values()
+        )
+
     def _browser_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "browser_defaults"))
-        return setting.value if setting and isinstance(setting.value, dict) else {"mode": "isolated", "headless": True, "timeout_seconds": 30, "download_images": True, "headers": {}}
+        return setting.value if setting and isinstance(setting.value, dict) else {"mode": "isolated", "headless": True, "timeout_seconds": 120, "download_images": True, "headers": {}}
 
     def _collection_settings(self) -> dict[str, object]:
         setting = self.database.scalar(select(AppSetting).where(AppSetting.key == "collection_defaults"))
@@ -164,7 +184,7 @@ class ContentCollectionService:
             cdp_endpoint = ContentCollectionService._cdp_endpoint(cdp_endpoint)
         return PlaywrightBrowserAdapter(
             headless=bool(settings.get("headless", True)),
-            timeout_ms=int(settings.get("timeout_seconds", 30)) * 1000,
+            timeout_ms=int(settings.get("timeout_seconds", 120)) * 1000,
             headers=ContentCollectionService._browser_headers(settings.get("headers")),
             cdp_endpoint=cdp_endpoint,
         )

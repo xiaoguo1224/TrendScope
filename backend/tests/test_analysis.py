@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -9,11 +10,14 @@ from sqlalchemy.orm import Session
 from app.models.configuration import AIProviderConfig
 from app.models.content import ContentItem, ContentMetricSnapshot
 from app.models.research_task import ResearchTask
+from app.model_gateway import ModelGateway, UnsupportedCapability
 from app.schemas.analysis import TextAnalysis, VisualAnalysis
 from app.providers.vision import MockVisionProvider
 from app.providers.openai_compatible import _endpoint_for, _headers_for, _payload_for, _response_text, _sse_response, OpenAICompatibleProvider, _routes_to_try
 from app.services.analysis import AnalysisService
 from app.services.ranking import RankingService
+from app.analysis_tools import TaskAnalysisToolRegistry
+from app.services.task_analysis_agent import TaskAnalysisAgent
 
 
 def _add_task_and_item(session: Session, *, external_id: str = "one", title: str = "Compact coffee kit") -> tuple[ResearchTask, ContentItem]:
@@ -103,6 +107,7 @@ def test_provider_url_routes_cover_supported_vendor_formats() -> None:
     assert _routes_to_try("http://127.0.0.1:11434/api/chat", "qwen3-vl") == ["ollama_chat"]
     assert _routes_to_try("https://router.example", "gpt-5.6-terra") == ["openai_responses", "openai_chat", "anthropic_messages"]
     assert _endpoint_for("https://router.example", "anthropic_messages") == "https://router.example/v1/messages"
+    assert _routes_to_try("https://router.example", "any-model", "anthropic_messages") == ["anthropic_messages"]
 
 
 @pytest.mark.parametrize(
@@ -140,6 +145,34 @@ def test_responses_vision_payload_uses_top_level_instructions_and_image_detail()
     assert image["type"] == "input_image"
     assert image["detail"] == "auto"
     assert payload["stream"] is True
+
+
+@pytest.mark.anyio
+async def test_vision_provider_detects_png_bytes_in_legacy_bin_file(tmp_path) -> None:
+    config = AIProviderConfig(name="vision", provider_type="vision", base_url="https://provider.example/v1/responses", model_name="model", api_key="test-key", enabled=True)
+    provider = OpenAICompatibleProvider(config)
+    image = tmp_path / "legacy-download.bin"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"fixture")
+    captured: dict[str, object] = {}
+
+    def post(endpoint, payload, headers):
+        captured["payload"] = payload
+        return {"output_text": '{"ok":true}'}
+
+    provider._post = post  # type: ignore[method-assign]
+    assert await provider.analyze_image(image_path=image, prompt="test", context={}) == {"ok": True}
+    image_url = captured["payload"]["input"][0]["content"][1]["image_url"]  # type: ignore[index]
+    assert str(image_url).startswith("data:image/png;base64,")
+
+
+@pytest.mark.anyio
+async def test_vision_provider_rejects_unknown_binary_before_network_call(tmp_path) -> None:
+    config = AIProviderConfig(name="vision", provider_type="vision", base_url="https://provider.example/v1/responses", model_name="model", api_key="test-key", enabled=True)
+    provider = OpenAICompatibleProvider(config)
+    unknown = tmp_path / "download.bin"
+    unknown.write_bytes(b"<html>blocked</html>")
+    with pytest.raises(ValueError, match="not a supported"):
+        await provider.analyze_image(image_path=unknown, prompt="test", context={})
 
 
 def test_responses_sse_deltas_are_assembled_into_output_text() -> None:
@@ -209,10 +242,131 @@ def test_analysis_endpoints_and_database_provider_selection(client) -> None:
     assert trend.json()["insufficient_data"] is True
 
 
-def test_complete_provider_configuration_selects_the_real_adapter(client) -> None:
+def test_task_analysis_api_reads_persisted_summary_and_only_post_runs_model(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    task, _ = _add_task_and_item(session)
+
+    initial = client.get(f"/api/v1/research/tasks/{task.id}/analysis")
+    assert initial.status_code == 200
+    assert initial.json()["copywriting_summary"] is None
+
+    generated = client.post(f"/api/v1/research/tasks/{task.id}/analysis/run")
+    assert generated.status_code == 200
+    assert generated.json()["copywriting_summary"]
+    persisted = client.get(f"/api/v1/research/tasks/{task.id}/analysis")
+    assert persisted.status_code == 200
+    assert persisted.json()["copywriting_summary"] == generated.json()["copywriting_summary"]
+
+
+def test_task_analysis_tools_are_read_only_and_task_scoped(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    task, item = _add_task_and_item(session, external_id="in-task")
+    _, outside = _add_task_and_item(session, external_id="outside")
+    registry = TaskAnalysisToolRegistry(session, task)
+
+    assert registry.execute("get_content_detail", {"content_item_id": item.id})["content_item_id"] == item.id
+    with pytest.raises(ValueError, match="not part of this research task"):
+        registry.execute("get_content_detail", {"content_item_id": outside.id})
+
+
+@pytest.mark.anyio
+async def test_task_analysis_agent_returns_one_summary_from_tool_evidence(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    task, _ = _add_task_and_item(session)
+
+    class SummaryProvider:
+        async def generate_structured(self, *, prompt, context):
+            if context["analysis_type"] == "tool_plan":
+                return {"calls": [{"name": "get_ranked_contents", "arguments": {"board": "Hot", "limit": 1}}]}
+            assert context["analysis_type"] == "task_summary"
+            return {
+                "copywriting_summary": "A task-level copywriting conclusion.", "visual_summary": "No visual evidence.",
+                "audience_summary": "A task-level audience conclusion.", "popularity_summary": "A task-level popularity conclusion.",
+                "reusable_patterns": ["clear opening"], "trend_tags": ["coffee"], "evidence": ["Observed ranked content."], "limitations": [],
+            }
+
+    class NoVision:
+        async def analyze_image(self, **kwargs):
+            raise AssertionError("No image should be analyzed when the task has no local images")
+
+    result = await TaskAnalysisAgent(TaskAnalysisToolRegistry(session, task), llm_provider=SummaryProvider(), vision_provider=NoVision()).run()
+    assert result.copywriting_summary == "A task-level copywriting conclusion."
+    assert result.reusable_patterns == ["clear opening"]
+
+
+def test_complete_provider_configuration_selects_the_model_gateway(client) -> None:
     from app.core.database import get_db
     session: Session = next(client.app.dependency_overrides[get_db]())
     session.add(AIProviderConfig(name="compatible", provider_type="llm", base_url="https://provider.example/v1", model_name="model", api_key="test-key", enabled=True))
     session.commit()
 
-    assert isinstance(AnalysisService(session).llm_provider, OpenAICompatibleProvider)
+    assert isinstance(AnalysisService(session).model_gateway, ModelGateway)
+    assert not isinstance(AnalysisService(session).llm_provider, OpenAICompatibleProvider)
+
+
+@pytest.mark.anyio
+async def test_model_gateway_uses_priority_and_only_falls_back_for_retryable_errors() -> None:
+    primary = AIProviderConfig(
+        name="primary", provider_type="llm", base_url="https://primary.example/v1", model_name="one",
+        api_key="key", protocol="openai_chat", capabilities={"text": True}, priority=10, enabled=True,
+    )
+    fallback = AIProviderConfig(
+        name="fallback", provider_type="llm", base_url="https://fallback.example/v1", model_name="two",
+        api_key="key", protocol="anthropic_messages", capabilities={"text": True}, priority=20, enabled=True,
+    )
+    calls: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, config):
+            self.config = config
+            self.last_endpoint = config.base_url
+            self.last_request_preview = config.protocol
+
+        async def generate_structured(self, *, prompt, context):
+            calls.append(self.config.name)
+            if self.config.name == "primary":
+                raise RuntimeError("HTTP 503: temporarily unavailable")
+            return {"ok": True}
+
+        async def analyze_image(self, *, image_path, prompt, context):
+            raise AssertionError("not used")
+
+    gateway = ModelGateway(configurations=[primary, fallback], provider_factory=FakeProvider)  # type: ignore[arg-type]
+    assert await gateway.generate_structured(purpose="llm", prompt="test", context={}) == {"ok": True}
+    assert calls == ["primary", "fallback"]
+    assert gateway.last_endpoint == "https://fallback.example/v1"
+
+
+@pytest.mark.anyio
+async def test_model_gateway_does_not_mask_non_retryable_or_missing_capability_errors() -> None:
+    invalid = AIProviderConfig(
+        name="invalid", provider_type="vision", base_url="https://invalid.example/v1", model_name="one",
+        api_key="key", protocol="openai_chat", capabilities={"vision": False}, priority=10, enabled=True,
+    )
+    gateway = ModelGateway(configurations=[invalid])
+    with pytest.raises(UnsupportedCapability, match="vision"):
+        await gateway.generate_structured(purpose="vision", prompt="test", context={}, image_path=Path("image.png"))
+
+    primary = AIProviderConfig(name="primary", provider_type="llm", base_url="https://primary.example/v1", model_name="one", api_key="key", priority=10, enabled=True)
+    fallback = AIProviderConfig(name="fallback", provider_type="llm", base_url="https://fallback.example/v1", model_name="two", api_key="key", priority=20, enabled=True)
+    calls: list[str] = []
+
+    class InvalidRequestProvider:
+        def __init__(self, config):
+            self.config = config
+            self.last_endpoint = config.base_url
+            self.last_request_preview = None
+
+        async def generate_structured(self, *, prompt, context):
+            calls.append(self.config.name)
+            raise RuntimeError("HTTP 400: invalid request")
+
+        async def analyze_image(self, *, image_path, prompt, context):
+            raise AssertionError("not used")
+
+    with pytest.raises(RuntimeError, match="HTTP 400"):
+        await ModelGateway(configurations=[primary, fallback], provider_factory=InvalidRequestProvider).generate_structured(purpose="llm", prompt="test", context={})  # type: ignore[arg-type]
+    assert calls == ["primary"]

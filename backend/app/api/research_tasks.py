@@ -13,12 +13,12 @@ from app.models.content import ContentItem
 from app.models.research_task import ResearchTask, ResearchTaskStatus
 from app.repositories.research_task import ResearchTaskRepository
 from app.schemas.research_task import ContentItemRead, ResearchTaskCreate, ResearchTaskRead
-from app.schemas.analysis import AnalysisItemRead, RankingsRead, TrendAnalysisRead
+from app.schemas.analysis import RankingsRead, TaskAnalysisRead, TrendAnalysisRead
 from app.schemas.reporting import CreativeConceptRead, ImagePromptRead, ReportRead
-from app.services.analysis import AnalysisService
 from app.services.collection import ContentCollectionService
 from app.services.ranking import RankingService
 from app.services.reporting import ReportingService
+from app.services.task_analysis import TaskAnalysisService
 
 router = APIRouter(prefix="/research/tasks", tags=["research-tasks"])
 
@@ -70,16 +70,24 @@ def get_rankings(task_id: int, database: Session = Depends(get_db)) -> RankingsR
     return RankingService(database).rank_task(task_id)
 
 
-@router.get("/{task_id}/analysis", response_model=list[AnalysisItemRead])
-async def get_analysis(task_id: int, database: Session = Depends(get_db)) -> list[AnalysisItemRead]:
+@router.get("/{task_id}/analysis", response_model=TaskAnalysisRead)
+def get_analysis(task_id: int, database: Session = Depends(get_db)) -> TaskAnalysisRead:
     task = _get_task_or_404(task_id, database)
-    return await AnalysisService(database).analyze_task(task)
+    return TaskAnalysisService(database).read(task)
+
+
+@router.post("/{task_id}/analysis/run", response_model=TaskAnalysisRead)
+async def run_analysis(task_id: int, regenerate: bool = False, database: Session = Depends(get_db)) -> TaskAnalysisRead:
+    task = _get_task_or_404(task_id, database)
+    if task.status is ResearchTaskStatus.ANALYZING:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Analysis is already running for this research task")
+    return await TaskAnalysisService(database).run(task, regenerate=regenerate)
 
 
 @router.get("/{task_id}/trends", response_model=TrendAnalysisRead)
-async def get_trends(task_id: int, database: Session = Depends(get_db)) -> TrendAnalysisRead:
+def get_trends(task_id: int, database: Session = Depends(get_db)) -> TrendAnalysisRead:
     task = _get_task_or_404(task_id, database)
-    return await AnalysisService(database).trends_for_task(task)
+    return TaskAnalysisService(database).trends(task)
 
 
 @router.get("/{task_id}/concepts", response_model=list[CreativeConceptRead])

@@ -92,9 +92,11 @@ def test_platform_prompt_and_masked_provider_configuration(client: TestClient) -
     assert platform.status_code == 201
     template = client.post("/api/v1/config/prompt-templates", json={"name": "text-analysis", "purpose": "text_analysis", "template": "Analyze safely"})
     assert template.status_code == 201
-    provider = client.post("/api/v1/config/ai-providers", json={"name": "local", "provider_type": "llm", "api_key": "secret-token"})
+    provider = client.post("/api/v1/config/ai-providers", json={"name": "local", "provider_type": "llm", "api_key": "secret-token", "protocol": "openai_responses", "capabilities": {"text": True, "structured_output": True}, "priority": 10})
     assert provider.status_code == 201
     assert provider.json()["api_key"] == "********oken"
+    assert provider.json()["protocol"] == "openai_responses"
+    assert provider.json()["priority"] == 10
     assert client.get("/api/v1/config/platforms").json()[0]["enabled"] is True
 
 

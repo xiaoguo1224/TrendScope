@@ -98,6 +98,28 @@ class AnalysisItemRead(BaseModel):
     analyzed_at: datetime | None = None
 
 
+class TaskAnalysisRead(BaseModel):
+    task_id: int
+    copywriting_summary: str | None = None
+    visual_summary: str | None = None
+    audience_summary: str | None = None
+    popularity_summary: str | None = None
+    reusable_patterns: list[str] = Field(default_factory=list)
+    trend_tags: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    limitations: list[str] = Field(default_factory=list)
+    hot_topics: list[str] = Field(default_factory=list)
+    rising_topics: list[str] = Field(default_factory=list)
+    visual_patterns: list[str] = Field(default_factory=list)
+    copywriting_patterns: list[str] = Field(default_factory=list)
+    audience_patterns: list[str] = Field(default_factory=list)
+    scenario_patterns: list[str] = Field(default_factory=list)
+    style_patterns: list[str] = Field(default_factory=list)
+    domain_patterns: list[str] = Field(default_factory=list)
+    analysis_error: str | None = None
+    analyzed_at: datetime | None = None
+
+
 class TrendAnalysisRead(BaseModel):
     task_id: int
     insufficient_data: bool

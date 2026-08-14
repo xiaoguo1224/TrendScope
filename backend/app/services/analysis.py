@@ -1,22 +1,24 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.configuration import ensure_analysis_defaults
 from app.models.analysis import ContentAnalysisRecord, TrendAnalysisRecord
-from app.models.configuration import AIProviderConfig, PromptTemplate
+from app.models.configuration import PromptTemplate
 from app.models.content import ContentItem
 from app.models.research_task import ResearchTask, ResearchTaskStatus
+from app.model_gateway import ModelGateway
 from app.providers.llm import LLMProvider, MockLLMProvider
 from app.providers.vision import MockVisionProvider, VisionProvider
-from app.providers.openai_compatible import OpenAICompatibleProvider
 from app.schemas.analysis import (
     AnalysisItemRead, ContentAnalysis, RankedContentItem, TextAnalysis, TrendAnalysisRead, VisualAnalysis,
 )
@@ -24,27 +26,62 @@ from app.services.ranking import RankingService
 
 logger = logging.getLogger(__name__)
 
+TEXT_ANALYSIS_CONTRACT = """
+Return one JSON object using exactly these fields:
+hook_type, title_structure, opening_hook, writing_style, emotion, pain_points,
+benefits, target_audience, scenario, cta, hashtags, topic_tags, reusable_patterns.
+All fields except cta are required. Use a concise string for every scalar; use []
+when an array has no supported value; cta may be null. Every array item must be a
+plain string. Do not return topic, platform, explanations, nested content_structure,
+or any fields outside this contract.
+""".strip()
+
+VISUAL_ANALYSIS_CONTRACT = """
+Return one JSON object using exactly these fields:
+subject, main_colors, secondary_colors, style, composition, camera_angle, lighting,
+background, visual_focus, scene, mood, target_audience, notable_elements,
+reusable_visual_patterns, domain_attributes, confidence.
+All fields are required. Use strings for scalar fields, arrays of plain strings,
+an object only for domain_attributes, and a confidence number from 0 to 1. Use []
+or {} when evidence is unavailable. Do not return prose or extra fields.
+""".strip()
+
 
 class AnalysisService:
     """Runs schema-validated analysis while containing failures to one content item."""
 
     def __init__(
         self, database: Session, *, llm_provider: LLMProvider | None = None, vision_provider: VisionProvider | None = None,
+        model_gateway: ModelGateway | None = None,
     ) -> None:
         self.database = database
-        # An enabled, complete provider configuration takes precedence; mock providers keep offline use possible.
+        self.model_gateway = model_gateway or ModelGateway(database)
+        # Explicit test doubles still take precedence. Production services see
+        # only the provider-neutral gateway, which owns protocol and URL choice.
         self.llm_provider = llm_provider or self._llm_provider()
         self.vision_provider = vision_provider or self._vision_provider()
 
-    async def analyze_task(self, task: ResearchTask) -> list[AnalysisItemRead]:
+    async def analyze_task(self, task: ResearchTask, *, retry_failed: bool = False) -> list[AnalysisItemRead]:
         ensure_analysis_defaults(self.database)
+        if task.status is ResearchTaskStatus.ANALYZING:
+            raise RuntimeError("Analysis is already running for this research task")
         rankings = RankingService(self.database).rank_task(task.id)
         ranked = {item.content_item_id: item for board in rankings.boards if board.name == "Hot" for item in board.items}
         contents = list(self.database.scalars(select(ContentItem).where(ContentItem.research_task_id == task.id)))
         results: list[AnalysisItemRead] = []
         failures = False
+        task.status = ResearchTaskStatus.ANALYZING
+        task.error_message = None
+        self.database.commit()
         for content in contents:
             record = self.database.scalar(select(ContentAnalysisRecord).where(ContentAnalysisRecord.content_item_id == content.id))
+            if record is not None and record.analysis_error is None and record.text_analysis and record.content_analysis:
+                results.append(self._response(content, record, ranked.get(content.id)))
+                continue
+            if record is not None and record.analysis_error and not retry_failed:
+                failures = True
+                results.append(self._response(content, record, ranked.get(content.id)))
+                continue
             if record is None:
                 record = ContentAnalysisRecord(content_item_id=content.id, visual_analyses=[])
                 self.database.add(record)
@@ -80,8 +117,23 @@ class AnalysisService:
             self.database.commit()
         return results
 
+    def read_task(self, task: ResearchTask) -> list[AnalysisItemRead]:
+        """Return persisted analysis only; read endpoints must never invoke a model."""
+        rankings = RankingService(self.database).rank_task(task.id)
+        ranked = {item.content_item_id: item for board in rankings.boards if board.name == "Hot" for item in board.items}
+        contents = list(self.database.scalars(select(ContentItem).where(ContentItem.research_task_id == task.id)))
+        records = {
+            record.content_item_id: record
+            for record in self.database.scalars(
+                select(ContentAnalysisRecord).join(ContentItem).where(ContentItem.research_task_id == task.id)
+            )
+        }
+        return [
+            self._response(content, records.get(content.id) or ContentAnalysisRecord(content_item_id=content.id, visual_analyses=[]), ranked.get(content.id))
+            for content in contents
+        ]
+
     async def trends_for_task(self, task: ResearchTask) -> TrendAnalysisRead:
-        await self.analyze_task(task)
         records = list(self.database.scalars(
             select(ContentAnalysisRecord).join(ContentItem).where(
                 ContentItem.research_task_id == task.id, ContentAnalysisRecord.analysis_error.is_(None),
@@ -98,11 +150,12 @@ class AnalysisService:
         return result
 
     async def _analyze_text(self, task: ResearchTask, content: ContentItem) -> TextAnalysis:
-        response = await self.llm_provider.generate_structured(
-            prompt=self._prompt("text_analysis", task),
-            context={"analysis_type": "text", "topic": task.topic, "platform": task.platform, "title": content.title or "", "text": content.text or ""},
+        context = {"analysis_type": "text", "topic": task.topic, "platform": task.platform, "title": content.title or "", "text": content.text or ""}
+        prompt = f"{self._prompt('text_analysis', task)}\n\n{TEXT_ANALYSIS_CONTRACT}"
+        response = await self.llm_provider.generate_structured(prompt=prompt, context=context)
+        return await self._validate_or_repair(
+            model=TextAnalysis, response=response, prompt=prompt, context=context, provider=self.llm_provider,
         )
-        return TextAnalysis.model_validate(response)
 
     async def _analyze_images(self, task: ResearchTask, content: ContentItem) -> list[VisualAnalysis]:
         analyses: list[VisualAnalysis] = []
@@ -111,11 +164,15 @@ class AnalysisService:
             if not image_path.is_file():
                 logger.warning("local_analysis_image_missing content_id=%s", content.id)
                 continue
+            context = {"analysis_type": "visual", "topic": task.topic, "platform": task.platform, "title": content.title or "", "content_id": content.id}
+            prompt = f"{self._prompt('visual_analysis', task)}\n\n{VISUAL_ANALYSIS_CONTRACT}"
             response = await self.vision_provider.analyze_image(
-                image_path=image_path, prompt=self._prompt("visual_analysis", task),
-                context={"topic": task.topic, "platform": task.platform, "title": content.title or "", "content_id": content.id},
+                image_path=image_path, prompt=prompt, context=context,
             )
-            analyses.append(VisualAnalysis.model_validate(response))
+            analyses.append(await self._validate_or_repair(
+                model=VisualAnalysis, response=response, prompt=prompt, context=context,
+                provider=self.vision_provider, image_path=image_path,
+            ))
         return analyses
 
     def _prompt(self, purpose: str, task: ResearchTask) -> str:
@@ -123,34 +180,30 @@ class AnalysisService:
         value = template.template if template else ""
         return value.replace("{topic}", task.topic).replace("{platform}", task.platform).replace("{research_goals}", task.research_goals or "")
 
+    @staticmethod
+    async def _validate_or_repair(
+        *, model: type[TextAnalysis] | type[VisualAnalysis], response: dict[str, Any], prompt: str,
+        context: dict[str, Any], provider: LLMProvider | VisionProvider, image_path: Path | None = None,
+    ) -> TextAnalysis | VisualAnalysis:
+        try:
+            return model.model_validate(response)
+        except ValidationError as original_error:
+            repair_prompt = (
+                f"The previous JSON did not satisfy the required contract. Repair it now.\n\n{prompt}\n\n"
+                f"Previous JSON:\n{json.dumps(response, ensure_ascii=False)}\n\n"
+                f"Validation errors:\n{str(original_error)[:3000]}"
+            )
+            if image_path is None:
+                repaired = await provider.generate_structured(prompt=repair_prompt, context=context)  # type: ignore[union-attr]
+            else:
+                repaired = await provider.analyze_image(image_path=image_path, prompt=repair_prompt, context=context)  # type: ignore[union-attr]
+            return model.model_validate(repaired)
+
     def _llm_provider(self) -> LLMProvider:
-        configured = self._configured_provider("llm")
-        return self._configured_or_mock(configured, MockLLMProvider())
+        return _GatewayLLMProvider(self.model_gateway) if self.model_gateway.has_candidate(purpose="llm") else MockLLMProvider()
 
     def _vision_provider(self) -> VisionProvider:
-        configured = self._configured_provider("vision")
-        return self._configured_or_mock(configured, MockVisionProvider())
-
-    @staticmethod
-    def _configured_or_mock(configured: AIProviderConfig | None, fallback: LLMProvider | VisionProvider) -> LLMProvider | VisionProvider:
-        if configured is None:
-            return fallback
-        try:
-            return OpenAICompatibleProvider(configured)
-        except ValueError as error:
-            logger.warning("analysis_provider_configuration_incomplete type=%s name=%s detail=%s", configured.provider_type, configured.name, error)
-            return fallback
-
-    def _configured_provider(self, provider_type: str) -> AIProviderConfig | None:
-        # Deliberately never log api_key or return it to callers.
-        configured = self.database.scalar(
-            select(AIProviderConfig).where(
-                AIProviderConfig.provider_type == provider_type, AIProviderConfig.enabled.is_(True),
-            ).order_by(AIProviderConfig.id)
-        )
-        if configured is not None:
-            logger.info("analysis_provider_selected type=%s name=%s model=%s", provider_type, configured.name, configured.model_name)
-        return configured
+        return _GatewayVisionProvider(self.model_gateway) if self.model_gateway.has_candidate(purpose="vision") else MockVisionProvider()
 
     @staticmethod
     def _build_content_analysis(
@@ -220,3 +273,25 @@ def _metrics(content: ContentItem) -> dict[str, int]:
 
 def _top(values: Iterable[str], limit: int = 10) -> list[str]:
     return [value for value, _ in Counter(value for value in values if value).most_common(limit)]
+
+
+class _GatewayLLMProvider:
+    """Keeps the existing LLMProvider seam while delegating runtime routing."""
+
+    def __init__(self, gateway: ModelGateway) -> None:
+        self.gateway = gateway
+
+    async def generate_structured(self, *, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
+        return await self.gateway.generate_structured(purpose="llm", prompt=prompt, context=context)
+
+
+class _GatewayVisionProvider:
+    """Keeps the existing VisionProvider seam while delegating runtime routing."""
+
+    def __init__(self, gateway: ModelGateway) -> None:
+        self.gateway = gateway
+
+    async def analyze_image(self, *, image_path: Path, prompt: str, context: dict[str, Any]) -> dict[str, Any]:
+        return await self.gateway.generate_structured(
+            purpose="vision", prompt=prompt, context=context, image_path=image_path,
+        )

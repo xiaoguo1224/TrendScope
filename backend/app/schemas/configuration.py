@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -56,6 +56,9 @@ class AIProviderConfigCreate(BaseModel):
     base_url: str | None = None
     model_name: str | None = None
     api_key: str | None = None
+    protocol: Literal["auto", "openai_responses", "openai_chat", "anthropic_messages", "gemini", "ollama_generate", "ollama_chat"] = "auto"
+    capabilities: dict[str, bool] = Field(default_factory=dict)
+    priority: int = Field(default=100, ge=0, le=10000)
     timeout_seconds: int = Field(default=60, ge=1, le=600)
     max_retries: int = Field(default=2, ge=0, le=10)
     enabled: bool = False

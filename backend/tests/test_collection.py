@@ -22,6 +22,9 @@ def test_collection_defaults_include_enabled_generic_public_adapter(client) -> N
     assert client.get("/api/v1/config/settings").status_code == 200
     platform = next(item for item in client.get("/api/v1/config/platforms").json() if item["name"] == "generic-web")
     assert platform["enabled"] is True
+    settings = client.get("/api/v1/config/settings").json()
+    browser = next(item for item in settings if item["key"] == "browser_defaults")
+    assert browser["value"]["timeout_seconds"] == 120
 
 
 def test_xiaohongshu_default_waits_for_dynamic_search_cards(client) -> None:
@@ -113,6 +116,52 @@ async def test_collection_expands_persists_media_and_snapshots(client, monkeypat
     assert item.like_count == 1200
     assert item.local_image_paths and item.local_image_paths[0].endswith("image-1.jpg")
     assert session.query(ContentMetricSnapshot).count() == 3  # each query observation records a fresh snapshot
+
+
+@pytest.mark.anyio
+async def test_collection_reuses_valid_expansion_saved_on_the_same_task(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    session.add(PlatformConfig(name="generic-web", search_url_template="https://example.test/search?q={query}", selectors={}, parser_rules={}))
+    task = ResearchTask(
+        platform="generic-web", topic="portable coffee", keywords=["coffee"], time_range="7d", max_items=1,
+        research_goals=None, expanded_keywords={"core_keywords": ["coffee"], "long_tail_keywords": ["portable coffee kit"]},
+    )
+    session.add(task)
+    session.commit()
+
+    class MustNotRunExpansion:
+        async def expand(self, task):
+            raise AssertionError("Existing task expansion should be reused")
+
+    browser = MockBrowserAdapter([{"external_id": "one", "url": "https://example.test/one", "title": "Coffee"}])
+    result = await ContentCollectionService(session, browser_factory=lambda _: browser, query_expansion=MustNotRunExpansion()).run(task)
+    assert result.status == ResearchTaskStatus.COMPLETED
+    assert result.expanded_keywords["long_tail_keywords"] == ["portable coffee kit"]
+
+
+@pytest.mark.anyio
+async def test_query_expansion_repairs_non_category_model_output(client) -> None:
+    from app.core.database import get_db
+    session: Session = next(client.app.dependency_overrides[get_db]())
+    task = ResearchTask(platform="generic-web", topic="美甲", keywords=["美甲"], time_range="7d", max_items=5, research_goals=None)
+    session.add(task)
+    session.commit()
+
+    class RepairingProvider:
+        calls = 0
+
+        async def generate_structured(self, *, prompt, context):
+            self.calls += 1
+            if self.calls == 1:
+                return {"topic": "美甲", "content_structure": {"title": "wrong schema"}}
+            return {"core_keywords": ["美甲"], "long_tail_keywords": ["夏日美甲", "美甲款式"], "trend_keywords": ["美甲趋势"], "audience_keywords": [], "scenario_keywords": [], "style_keywords": []}
+
+    provider = RepairingProvider()
+    result = await QueryExpansionService(session, provider=provider).expand(task)
+    assert provider.calls == 2
+    assert result["core_keywords"] == ["美甲"]
+    assert result["long_tail_keywords"] == ["夏日美甲", "美甲款式"]
 
 
 @pytest.mark.anyio

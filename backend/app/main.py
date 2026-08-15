@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.router import api_router
 from app.core.config import get_settings
@@ -43,3 +46,29 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
 async def unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
     logger.exception("unhandled_exception")
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
+def _frontend_directory() -> Path | None:
+    """Return the built SPA directory when the desktop distribution supplies one."""
+    configured_directory = os.getenv("TRENDSCOPE_FRONTEND_DIR")
+    if not configured_directory:
+        return None
+    directory = Path(configured_directory)
+    index_file = directory / "index.html"
+    return directory if index_file.is_file() else None
+
+
+frontend_directory = _frontend_directory()
+if frontend_directory is not None:
+    assets_directory = frontend_directory / "assets"
+    if assets_directory.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_directory), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/{frontend_path:path}", include_in_schema=False)
+    def serve_frontend(frontend_path: str = "") -> FileResponse:
+        """Serve Vite assets and fall back to the SPA entry point for client routes."""
+        requested_file = (frontend_directory / frontend_path).resolve()
+        if frontend_path and requested_file.is_file() and frontend_directory in requested_file.parents:
+            return FileResponse(requested_file)
+        return FileResponse(frontend_directory / "index.html")

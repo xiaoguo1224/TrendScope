@@ -15,6 +15,7 @@ Stage 04 — Concept, Prompt, Report & Final Frontend (complete)
 - Task-level analysis: the agent selects bounded, read-only evidence tools and persists one model-authored synthesis per task. Analysis/trend GET endpoints are read-only; content-level AI loops are no longer on the runtime path. Re-running a synthesis invalidates derived Concepts, Prompts and reports so they rebuild from current evidence.
 - Collection reliability: browser page timeout defaults to 120 seconds (with a migration for prior 30-second SQLite settings); long-running collection/model requests have explicit frontend budgets. Query expansion now validates the category contract, performs one repair for malformed or echo-only model output, and uses a logged local fallback only if the provider still cannot expand. Valid expansion results are persisted and reused only when the same task is run again.
 - Vision-media reliability: downloaded public media and legacy `.bin` files are sniffed for JPEG/PNG/GIF/WebP bytes before a vision request. Unsupported bytes are retained out of the vision path with a clear local error instead of being sent as `application/octet-stream`.
+- Windows portable release: a PyInstaller distribution bundles the Vue workspace, FastAPI service, Alembic migrations and Playwright Chromium. It opens locally on `127.0.0.1`, stores user state under `%LOCALAPPDATA%\\TrendScope`, and seeds a sanitized initial snapshot without AI Provider configuration or browser authentication headers.
 
 ## In Progress
 
@@ -25,6 +26,7 @@ Stage 04 — Concept, Prompt, Report & Final Frontend (complete)
 - Final backend tests: 53 passed.
 - Alembic upgrade to `0009_browser_timeout_default`: passed.
 - Final frontend production build: passed.
+- Portable EXE smoke test: `TrendScope.exe` started successfully and `/health` returned `ok` on 2026-08-15.
 
 ## Known Limitations
 

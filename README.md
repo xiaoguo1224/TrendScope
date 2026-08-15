@@ -2,6 +2,10 @@
 
 通用 AI 内容趋势研究 Agent。当前已完成 Version 1：页面化采集/分析配置、公开内容采集、互动排序、图文分析、趋势工作台、Creative Concept、图片 Prompt 与研究报告。
 
+## 给普通使用者的免环境版本
+
+发布者可按 [Windows 免环境发布说明](docs/WINDOWS_PORTABLE_RELEASE.md) 构建并交付 `release\\TrendScope` 文件夹。使用者只需双击其中的 `TrendScope.exe`，无需安装 Python、Node.js、uv 或浏览器运行时；个人数据会保存到 `%LOCALAPPDATA%\\TrendScope`，升级程序不会覆盖它。
+
 ## 启动教程
 
 ### 1. 准备环境

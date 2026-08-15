@@ -9,6 +9,8 @@ backend/.venv/
 # Node / frontend builds
 frontend/node_modules/
 frontend/dist/
+.build/
+release/
 
 # Runtime data and generated artifacts
 data/*

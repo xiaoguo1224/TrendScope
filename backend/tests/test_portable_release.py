@@ -5,6 +5,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+from app import desktop
+
 
 def _load_initial_data_preparer():
     script = Path(__file__).resolve().parents[2] / "scripts" / "prepare-initial-data.py"
@@ -33,3 +35,9 @@ def test_release_snapshot_removes_model_and_browser_credentials(tmp_path: Path) 
         browser_settings = json.loads(database.execute("SELECT value FROM app_settings WHERE key = 'browser_defaults'").fetchone()[0])
         assert browser_settings["mode"] == "isolated"
         assert browser_settings["headers"] == {}
+
+
+def test_macos_runtime_data_uses_application_support(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(desktop.sys, "platform", "darwin")
+    monkeypatch.setattr(desktop.Path, "home", lambda: tmp_path)
+    assert desktop.runtime_directory() == tmp_path / "Library" / "Application Support" / "TrendScope"

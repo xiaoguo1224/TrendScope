@@ -23,8 +23,13 @@ def resource_directory() -> Path:
 
 def runtime_directory() -> Path:
     """Keep mutable user data outside the program directory and future upgrades."""
-    local_app_data = os.getenv("LOCALAPPDATA")
-    base_directory = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+    if sys.platform == "darwin":
+        base_directory = Path.home() / "Library" / "Application Support"
+    elif os.name == "nt":
+        local_app_data = os.getenv("LOCALAPPDATA")
+        base_directory = Path(local_app_data) if local_app_data else Path.home() / "AppData" / "Local"
+    else:
+        base_directory = Path(os.getenv("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     return base_directory / APPLICATION_NAME
 
 

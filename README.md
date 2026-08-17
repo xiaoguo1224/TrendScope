@@ -6,6 +6,8 @@
 
 发布者可按 [Windows 免环境发布说明](docs/WINDOWS_PORTABLE_RELEASE.md) 构建并交付 `release\\TrendScope` 文件夹。使用者只需双击其中的 `TrendScope.exe`，无需安装 Python、Node.js、uv 或浏览器运行时；个人数据会保存到 `%LOCALAPPDATA%\\TrendScope`，升级程序不会覆盖它。
 
+macOS 发布请使用 [macOS 免环境发布说明](docs/MACOS_RELEASE.md)，输出 `release-macos/TrendScope.app`。
+
 ## 启动教程
 
 ### 1. 准备环境
